@@ -1,5 +1,7 @@
 use raylib::prelude::Color;
 
+const TRANSPARENCY_EPSILON: f32 = 1.0e-6;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Material {
     pub base_color: Color,
@@ -41,6 +43,10 @@ impl Material {
         material
     }
 
+    pub fn is_opaque(&self) -> bool {
+        self.transparency <= TRANSPARENCY_EPSILON
+    }
+
     fn validate(&self) {
         for (name, value) in [
             ("albedo", self.albedo),
@@ -53,5 +59,22 @@ impl Material {
                 "material {name} must be between 0.0 and 1.0"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opacity_uses_transparency_with_a_small_tolerance() {
+        let mut material = Material::new(Color::WHITE);
+        assert!(material.is_opaque());
+
+        material.transparency = TRANSPARENCY_EPSILON;
+        assert!(material.is_opaque());
+
+        material.transparency = 0.01;
+        assert!(!material.is_opaque());
     }
 }

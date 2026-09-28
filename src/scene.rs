@@ -88,7 +88,7 @@ pub fn load(
     let opaque_full_positions: HashSet<[i32; 3]> = resolved_blocks
         .iter()
         .filter_map(|(position, _, definition)| {
-            is_opaque_full_block(definition.geometry).then_some(*position)
+            is_opaque_full_block(*definition).then_some(*position)
         })
         .collect();
     let mut scene = Scene {
@@ -177,8 +177,8 @@ fn block_name(block_state: &str) -> &str {
         .map_or(block_state, |value| value.0)
 }
 
-fn is_opaque_full_block(geometry: BlockGeometry) -> bool {
-    geometry == BlockGeometry::OpaqueCube
+fn is_opaque_full_block(definition: BlockDefinition) -> bool {
+    definition.geometry == BlockGeometry::OpaqueCube && definition.material.is_opaque()
 }
 
 fn is_fully_enclosed(position: [i32; 3], opaque_full_positions: &HashSet<[i32; 3]>) -> bool {
@@ -249,7 +249,15 @@ fn parse_value<T: std::str::FromStr>(
 
 #[cfg(test)]
 mod tests {
+    use raylib::prelude::Color;
+
     use super::*;
+
+    fn definition(geometry: BlockGeometry, transparency: f32) -> BlockDefinition {
+        let mut material = crate::material::Material::new(Color::WHITE);
+        material.transparency = transparency;
+        BlockDefinition { material, geometry }
+    }
 
     fn enclosed_positions() -> HashSet<[i32; 3]> {
         [
@@ -292,14 +300,47 @@ mod tests {
             BlockGeometry::Wall,
             BlockGeometry::Portal,
         ] {
-            assert!(!is_opaque_full_block(geometry));
+            assert!(!is_opaque_full_block(definition(geometry, 0.0)));
 
             let mut positions = enclosed_positions();
             positions.remove(&[1, 0, 0]);
-            if is_opaque_full_block(geometry) {
+            if is_opaque_full_block(definition(geometry, 0.0)) {
                 positions.insert([1, 0, 0]);
             }
             assert!(!is_fully_enclosed([0, 0, 0], &positions));
         }
+    }
+
+    #[test]
+    fn opaque_full_cube_can_occlude_an_adjacent_face() {
+        assert!(is_opaque_full_block(definition(
+            BlockGeometry::OpaqueCube,
+            0.0
+        )));
+    }
+
+    #[test]
+    fn transparent_neighbor_does_not_fully_enclose_a_cube() {
+        let mut positions = enclosed_positions();
+        positions.remove(&[1, 0, 0]);
+        let transparent = definition(BlockGeometry::OpaqueCube, 0.35);
+        if is_opaque_full_block(transparent) {
+            positions.insert([1, 0, 0]);
+        }
+
+        assert!(!is_fully_enclosed([0, 0, 0], &positions));
+    }
+
+    #[test]
+    fn transparent_full_cubes_are_conservative_occlusion_boundaries() {
+        let opaque = definition(BlockGeometry::OpaqueCube, 0.0);
+        let transparent = definition(BlockGeometry::Cube, 0.35);
+
+        assert!(is_opaque_full_block(opaque));
+        assert!(!is_opaque_full_block(transparent));
+        assert!(!is_opaque_full_block(definition(
+            BlockGeometry::OpaqueCube,
+            0.35
+        )));
     }
 }
