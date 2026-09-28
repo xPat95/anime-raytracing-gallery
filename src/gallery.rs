@@ -18,7 +18,13 @@ pub struct SceneConfig {
 }
 
 pub fn available_scenes() -> Vec<SceneConfig> {
-    vec![black_clover_skull(), shenlong(), kurama(), pochita()]
+    vec![
+        black_clover_skull(),
+        shenlong(),
+        kurama(),
+        pochita(),
+        lapras(),
+    ]
 }
 
 fn black_clover_skull() -> SceneConfig {
@@ -217,15 +223,7 @@ fn kurama() -> SceneConfig {
         orange_concrete_material(),
         black_concrete_material(),
         white_concrete_material(),
-        material(
-            "minecraft:pink_concrete",
-            "pink_concrete",
-            BlockGeometry::OpaqueCube,
-            0.82,
-            0.12,
-            0.00,
-            0.03,
-        ),
+        pink_concrete_material(),
         glowstone_material(),
         red_stained_glass_material(),
     ];
@@ -268,15 +266,7 @@ fn pochita() -> SceneConfig {
         white_concrete_material(),
         stone_material(),
         black_concrete_material(),
-        material(
-            "minecraft:red_wool",
-            "red_wool",
-            BlockGeometry::OpaqueCube,
-            0.78,
-            0.03,
-            0.00,
-            0.01,
-        ),
+        red_wool_material(),
     ];
 
     SceneConfig {
@@ -294,6 +284,81 @@ fn pochita() -> SceneConfig {
         lighting: LightingConfig {
             light: PointLight {
                 position: Vec3::new(90.0, 130.0, 120.0),
+                color: Color::new(255, 244, 224, 255),
+                intensity: 1.15,
+            },
+            ambient_intensity: 0.14,
+            shadow_bias: 0.001,
+            phong_shininess: 32.0,
+        },
+    }
+}
+
+fn lapras() -> SceneConfig {
+    let textures = vec![
+        texture("light_blue_wool", "assets/textures/light_blue_wool.png"),
+        texture("ochre_froglight", "assets/textures/ochre_froglight.png"),
+        texture("diorite", "assets/textures/diorite.png"),
+        texture("pink_concrete", "assets/textures/pink_concrete.png"),
+        texture("brown_concrete", "assets/textures/brown_concrete.png"),
+        texture("red_wool", "assets/textures/red_wool.png"),
+    ];
+    let materials = vec![
+        material(
+            "minecraft:light_blue_wool",
+            "light_blue_wool",
+            BlockGeometry::OpaqueCube,
+            0.78,
+            0.03,
+            0.00,
+            0.01,
+        ),
+        material(
+            "minecraft:ochre_froglight",
+            "ochre_froglight",
+            BlockGeometry::OpaqueCube,
+            0.92,
+            0.22,
+            0.00,
+            0.07,
+        ),
+        material(
+            "minecraft:diorite",
+            "diorite",
+            BlockGeometry::OpaqueCube,
+            0.80,
+            0.15,
+            0.00,
+            0.04,
+        ),
+        pink_concrete_material(),
+        material(
+            "minecraft:brown_concrete",
+            "brown_concrete",
+            BlockGeometry::OpaqueCube,
+            0.75,
+            0.08,
+            0.00,
+            0.02,
+        ),
+        red_wool_material(),
+    ];
+
+    SceneConfig {
+        id: "lapras",
+        display_name: "Lapras",
+        scene_path: "assets/scenes/lapras.scene",
+        textures,
+        materials,
+        camera: CameraConfig::from_position(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(95.0, 62.0, 111.0),
+            5.0,
+            450.0,
+        ),
+        lighting: LightingConfig {
+            light: PointLight {
+                position: Vec3::new(130.0, 170.0, 150.0),
                 color: Color::new(255, 244, 224, 255),
                 intensity: 1.15,
             },
@@ -349,6 +414,30 @@ fn white_concrete_material() -> MaterialConfig {
         0.25,
         0.00,
         0.06,
+    )
+}
+
+fn pink_concrete_material() -> MaterialConfig {
+    material(
+        "minecraft:pink_concrete",
+        "pink_concrete",
+        BlockGeometry::OpaqueCube,
+        0.82,
+        0.12,
+        0.00,
+        0.03,
+    )
+}
+
+fn red_wool_material() -> MaterialConfig {
+    material(
+        "minecraft:red_wool",
+        "red_wool",
+        BlockGeometry::OpaqueCube,
+        0.78,
+        0.03,
+        0.00,
+        0.01,
     )
 }
 
@@ -413,7 +502,7 @@ mod tests {
     #[test]
     fn real_scenes_are_registered() {
         let scenes = available_scenes();
-        assert_eq!(scenes.len(), 4);
+        assert_eq!(scenes.len(), 5);
         assert_eq!(scenes[0].id, "black_clover_skull");
         assert_eq!(scenes[0].display_name, "Black Clover - Skull");
         assert_eq!(scenes[0].scene_path, "assets/scenes/proyecto.scene");
@@ -426,6 +515,9 @@ mod tests {
         assert_eq!(scenes[3].id, "pochita");
         assert_eq!(scenes[3].display_name, "Pochita");
         assert_eq!(scenes[3].scene_path, "assets/scenes/pochita.scene");
+        assert_eq!(scenes[4].id, "lapras");
+        assert_eq!(scenes[4].display_name, "Lapras");
+        assert_eq!(scenes[4].scene_path, "assets/scenes/lapras.scene");
     }
 
     #[test]
@@ -608,5 +700,45 @@ mod tests {
         assert_eq!(red_wool.specular, 0.03);
         assert_eq!(red_wool.transparency, 0.0);
         assert_eq!(red_wool.reflectivity, 0.01);
+    }
+
+    #[test]
+    fn lapras_loads_its_six_materials_and_builds_a_bvh() {
+        let config = lapras();
+        let mut camera = crate::camera::Camera::new(config.camera);
+        let initial_position = camera.position();
+        let (materials, textures) =
+            MaterialCatalog::load(&config.textures, &config.materials).unwrap();
+        for block_name in [
+            "minecraft:light_blue_wool",
+            "minecraft:ochre_froglight",
+            "minecraft:diorite",
+            "minecraft:pink_concrete",
+            "minecraft:brown_concrete",
+            "minecraft:red_wool",
+        ] {
+            assert!(materials.for_block(block_name).unwrap().is_some());
+        }
+        let scene = scene::load(
+            config.scene_path,
+            |block_name| materials.for_block(block_name),
+            true,
+        )
+        .unwrap();
+        let bvh = Bvh::build(&scene.primitives);
+
+        assert_eq!(textures.len(), 6);
+        assert_eq!(scene.block_count(), 14_635);
+        assert!(!scene.primitives.is_empty());
+        assert!(bvh.node_count() > 0);
+        assert!(camera.radius() > config.camera.min_radius);
+        assert!(camera.radius() < config.camera.max_radius);
+
+        camera.orbit(20.0, -10.0);
+        camera.pan(15.0, -5.0);
+        camera.zoom(3.0);
+        assert!(camera.reset());
+        assert!((camera.position() - initial_position).length() < 0.001);
+        assert!((camera.radius() - config.camera.radius).abs() < 0.001);
     }
 }
