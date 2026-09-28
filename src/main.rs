@@ -3,6 +3,7 @@ mod camera;
 mod cube;
 mod framebuffer;
 mod intersect;
+mod light;
 mod material;
 mod materials;
 mod ray_intersect;
@@ -15,6 +16,7 @@ use std::{env, time::Instant};
 
 use camera::Camera;
 use framebuffer::Framebuffer;
+use light::LightingConfig;
 use materials::MaterialCatalog;
 use raylib::prelude::*;
 use texture::Texture;
@@ -38,6 +40,7 @@ fn main() -> Result<(), String> {
         Vec3::new(0.0, 0.0, 0.0),
         48.0,
     );
+    let lighting = LightingConfig::scene();
     let (materials, textures) = MaterialCatalog::load()?;
     let framebuffer = match mode {
         RunMode::Compare => {
@@ -54,9 +57,14 @@ fn main() -> Result<(), String> {
             print_scene_metrics(&optimized_scene);
 
             let (full_framebuffer, full_time) =
-                render_scene(&camera, &full_scene, &textures, "full scene");
-            let (optimized_framebuffer, optimized_time) =
-                render_scene(&camera, &optimized_scene, &textures, "optimized scene");
+                render_scene(&camera, &full_scene, &textures, &lighting, "full scene");
+            let (optimized_framebuffer, optimized_time) = render_scene(
+                &camera,
+                &optimized_scene,
+                &textures,
+                &lighting,
+                "optimized scene",
+            );
             let difference = full_framebuffer.difference(&optimized_framebuffer)?;
             println!(
                 "Framebuffer comparison: {} different pixels, maximum channel difference {}",
@@ -81,7 +89,7 @@ fn main() -> Result<(), String> {
             } else {
                 "full scene"
             };
-            render_scene(&camera, &scene, &textures, label).0
+            render_scene(&camera, &scene, &textures, &lighting, label).0
         }
     };
 
@@ -130,12 +138,19 @@ fn render_scene(
     camera: &Camera,
     scene: &scene::Scene,
     textures: &[Texture],
+    lighting: &LightingConfig,
     label: &str,
 ) -> (Framebuffer, std::time::Duration) {
     let mut framebuffer = Framebuffer::new(RENDER_WIDTH, RENDER_HEIGHT, Color::BLACK);
     println!("Rendering {label} at {RENDER_WIDTH} x {RENDER_HEIGHT}...");
     let started = Instant::now();
-    render::render(&mut framebuffer, camera, &scene.primitives, textures);
+    render::render(
+        &mut framebuffer,
+        camera,
+        &scene.primitives,
+        textures,
+        lighting,
+    );
     let elapsed = started.elapsed();
     println!("{label} completed in {elapsed:.2?}");
     (framebuffer, elapsed)
