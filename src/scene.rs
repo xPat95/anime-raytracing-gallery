@@ -4,15 +4,22 @@ use std::{
     path::Path,
 };
 
-use crate::{cube::Cube, material::Material, vec3::Vec3};
+use crate::{block_geometry, cube::Cube, material::Material, vec3::Vec3};
 
 pub struct Scene {
-    pub cubes: Vec<Cube>,
+    pub primitives: Vec<Cube>,
     pub dimensions: [u32; 3],
     pub offset: Vec3,
-    pub omitted_slabs: usize,
-    pub omitted_stairs: usize,
-    pub omitted_walls: usize,
+    pub full_blocks: usize,
+    pub slabs: usize,
+    pub stairs: usize,
+    pub walls: usize,
+}
+
+impl Scene {
+    pub fn block_count(&self) -> usize {
+        self.full_blocks + self.slabs + self.stairs + self.walls
+    }
 }
 
 pub fn load(
@@ -58,38 +65,68 @@ pub fn load(
         )
     })?;
     let mut scene = Scene {
-        cubes: Vec::new(),
+        primitives: Vec::new(),
         dimensions,
         offset,
-        omitted_slabs: 0,
-        omitted_stairs: 0,
-        omitted_walls: 0,
+        full_blocks: 0,
+        slabs: 0,
+        stairs: 0,
+        walls: 0,
     };
 
     for (position, block_state) in blocks {
         let block_name = block_state
             .split_once('[')
             .map_or(block_state.as_str(), |value| value.0);
+        let center = Vec3::new(
+            position[0] as f32 + offset.x,
+            position[1] as f32 + offset.y,
+            position[2] as f32 + offset.z,
+        );
+
         match block_name {
-            "minecraft:blackstone_slab" => scene.omitted_slabs += 1,
-            "minecraft:blackstone_stairs" => scene.omitted_stairs += 1,
-            "minecraft:blackstone_wall" => scene.omitted_walls += 1,
+            "minecraft:blackstone_slab" => {
+                let material = required_material(&material_for_block, block_name)?;
+                scene
+                    .primitives
+                    .extend(block_geometry::slab(center, &block_state, material)?);
+                scene.slabs += 1;
+            }
+            "minecraft:blackstone_stairs" => {
+                let material = required_material(&material_for_block, block_name)?;
+                scene
+                    .primitives
+                    .extend(block_geometry::stairs(center, &block_state, material)?);
+                scene.stairs += 1;
+            }
+            "minecraft:blackstone_wall" => {
+                let material = required_material(&material_for_block, block_name)?;
+                scene
+                    .primitives
+                    .extend(block_geometry::wall(center, &block_state, material)?);
+                scene.walls += 1;
+            }
             _ => {
                 if let Some(material) = material_for_block(block_name)? {
-                    let center = Vec3::new(
-                        position[0] as f32 + offset.x,
-                        position[1] as f32 + offset.y,
-                        position[2] as f32 + offset.z,
-                    );
                     scene
-                        .cubes
+                        .primitives
                         .push(Cube::from_center_size(center, 1.0, material));
+                    scene.full_blocks += 1;
                 }
             }
         }
     }
 
     Ok(scene)
+}
+
+fn required_material(
+    material_for_block: &impl Fn(&str) -> Result<Option<Material>, String>,
+    block_name: &str,
+) -> Result<Material, String> {
+    material_for_block(block_name)?.ok_or_else(|| {
+        format!("special block '{block_name}' requires a material but none was provided")
+    })
 }
 
 fn parse_block(line: &str, path: &Path, line_number: usize) -> Result<([i32; 3], String), String> {

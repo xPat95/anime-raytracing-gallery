@@ -5,6 +5,8 @@ const EPSILON: f32 = 0.0001;
 pub struct Cube {
     min: Vec3,
     max: Vec3,
+    uv_min: Vec3,
+    uv_max: Vec3,
     material: Material,
 }
 
@@ -15,6 +17,25 @@ impl Cube {
         Self {
             min: center - half_size,
             max: center + half_size,
+            uv_min: center - half_size,
+            uv_max: center + half_size,
+            material,
+        }
+    }
+
+    pub fn from_block_bounds(
+        block_center: Vec3,
+        local_min: Vec3,
+        local_max: Vec3,
+        material: Material,
+    ) -> Self {
+        let block_min = block_center - Vec3::new(0.5, 0.5, 0.5);
+
+        Self {
+            min: block_min + local_min,
+            max: block_min + local_max,
+            uv_min: block_min,
+            uv_max: block_min + Vec3::new(1.0, 1.0, 1.0),
             material,
         }
     }
@@ -37,18 +58,23 @@ impl Cube {
 
     fn uv_at(&self, point: Vec3, normal: Vec3) -> (f32, f32) {
         if normal.x > 0.0 {
-            (self.max.z - point.z, self.max.y - point.y)
+            (self.uv_max.z - point.z, self.uv_max.y - point.y)
         } else if normal.x < 0.0 {
-            (point.z - self.min.z, self.max.y - point.y)
+            (point.z - self.uv_min.z, self.uv_max.y - point.y)
         } else if normal.y > 0.0 {
-            (point.x - self.min.x, point.z - self.min.z)
+            (point.x - self.uv_min.x, point.z - self.uv_min.z)
         } else if normal.y < 0.0 {
-            (point.x - self.min.x, self.max.z - point.z)
+            (point.x - self.uv_min.x, self.uv_max.z - point.z)
         } else if normal.z > 0.0 {
-            (point.x - self.min.x, self.max.y - point.y)
+            (point.x - self.uv_min.x, self.uv_max.y - point.y)
         } else {
-            (self.max.x - point.x, self.max.y - point.y)
+            (self.uv_max.x - point.x, self.uv_max.y - point.y)
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bounds(&self) -> (Vec3, Vec3) {
+        (self.min, self.max)
     }
 }
 

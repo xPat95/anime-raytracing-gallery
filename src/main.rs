@@ -1,3 +1,4 @@
+mod block_geometry;
 mod camera;
 mod cube;
 mod framebuffer;
@@ -27,6 +28,7 @@ const MOSS_BLOCK: usize = 1;
 const OBSIDIAN: usize = 2;
 const SMOOTH_QUARTZ: usize = 3;
 const NETHER_PORTAL: usize = 4;
+const BLACKSTONE: usize = 5;
 
 fn main() -> Result<(), String> {
     let mut framebuffer = Framebuffer::new(RENDER_WIDTH, RENDER_HEIGHT, Color::BLACK);
@@ -39,22 +41,26 @@ fn main() -> Result<(), String> {
     let scene = scene::load("assets/scenes/proyecto.scene", material_for_block)?;
 
     println!(
-        "Loaded {} cubes from a {} x {} x {} scene (offset: {}, {}, {})",
-        scene.cubes.len(),
+        "Loaded {} Minecraft blocks as {} AABB primitives from a {} x {} x {} scene",
+        scene.block_count(),
+        scene.primitives.len(),
         scene.dimensions[0],
         scene.dimensions[1],
-        scene.dimensions[2],
+        scene.dimensions[2]
+    );
+    println!(
+        "Blocks: {} full, {} slabs, {} stairs, {} walls (offset: {}, {}, {})",
+        scene.full_blocks,
+        scene.slabs,
+        scene.stairs,
+        scene.walls,
         scene.offset.x,
         scene.offset.y,
         scene.offset.z
     );
-    println!(
-        "Temporarily omitted: {} slabs, {} stairs, {} walls",
-        scene.omitted_slabs, scene.omitted_stairs, scene.omitted_walls
-    );
     println!("Rendering {RENDER_WIDTH} x {RENDER_HEIGHT} primary rays...");
     let render_started = Instant::now();
-    render::render(&mut framebuffer, &camera, &scene.cubes, &textures);
+    render::render(&mut framebuffer, &camera, &scene.primitives, &textures);
     println!("Render completed in {:.2?}", render_started.elapsed());
 
     let (mut raylib, thread) = raylib::init()
@@ -94,6 +100,7 @@ fn load_textures() -> Result<Vec<Texture>, String> {
         Texture::load("assets/textures/obsidian.png")?,
         Texture::load("assets/textures/smooth_quartz.png")?,
         Texture::load_first_frame("assets/textures/nether_portal.png", 16)?,
+        Texture::load("assets/textures/blackstone.png")?,
     ])
 }
 
@@ -105,6 +112,9 @@ fn material_for_block(block_name: &str) -> Result<Option<Material>, String> {
         "minecraft:obsidian" => OBSIDIAN,
         "minecraft:smooth_quartz" => SMOOTH_QUARTZ,
         "minecraft:nether_portal" => NETHER_PORTAL,
+        "minecraft:blackstone_slab"
+        | "minecraft:blackstone_stairs"
+        | "minecraft:blackstone_wall" => BLACKSTONE,
         _ => return Err(format!("scene contains unsupported block '{block_name}'")),
     };
 
