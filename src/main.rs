@@ -22,9 +22,10 @@ use raylib::prelude::*;
 use texture::Texture;
 use vec3::Vec3;
 
-const RENDER_WIDTH: u32 = 240;
-const RENDER_HEIGHT: u32 = 135;
-const WINDOW_SCALE: u32 = 4;
+const RENDER_WIDTH: u32 = 480;
+const RENDER_HEIGHT: u32 = 270;
+const INITIAL_WINDOW_WIDTH: i32 = 1280;
+const INITIAL_WINDOW_HEIGHT: i32 = 720;
 
 #[derive(Clone, Copy)]
 enum RunMode {
@@ -38,7 +39,7 @@ fn main() -> Result<(), String> {
     let camera = Camera::look_at(
         Vec3::new(145.0, 95.0, 180.0),
         Vec3::new(0.0, 0.0, 0.0),
-        48.0,
+        43.0,
     );
     let lighting = LightingConfig::scene();
     let (materials, textures) = MaterialCatalog::load()?;
@@ -94,33 +95,50 @@ fn main() -> Result<(), String> {
     };
 
     let (mut raylib, thread) = raylib::init()
-        .size(
-            (RENDER_WIDTH * WINDOW_SCALE) as i32,
-            (RENDER_HEIGHT * WINDOW_SCALE) as i32,
-        )
+        .size(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT)
         .title("Black Clover Ray Tracing Skull - Imported Schematic")
+        .resizable()
         .build();
 
+    raylib.maximize_window();
     raylib.set_target_fps(60);
 
     let image = framebuffer.to_image();
     let texture = raylib
         .load_texture_from_image(&thread, &image)
         .map_err(|error| format!("could not create texture from framebuffer: {error}"))?;
+    texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
 
     while !raylib.window_should_close() {
+        let destination =
+            fit_render_to_window(raylib.get_screen_width(), raylib.get_screen_height());
         let mut drawing = raylib.begin_drawing(&thread);
         drawing.clear_background(Color::BLACK);
-        drawing.draw_texture_ex(
+        drawing.draw_texture_pro(
             &texture,
+            Rectangle::new(0.0, 0.0, RENDER_WIDTH as f32, RENDER_HEIGHT as f32),
+            destination,
             Vector2::new(0.0, 0.0),
             0.0,
-            WINDOW_SCALE as f32,
             Color::WHITE,
         );
     }
 
     Ok(())
+}
+
+fn fit_render_to_window(window_width: i32, window_height: i32) -> Rectangle {
+    let scale = (window_width as f32 / RENDER_WIDTH as f32)
+        .min(window_height as f32 / RENDER_HEIGHT as f32);
+    let width = RENDER_WIDTH as f32 * scale;
+    let height = RENDER_HEIGHT as f32 * scale;
+
+    Rectangle::new(
+        (window_width as f32 - width) * 0.5,
+        (window_height as f32 - height) * 0.5,
+        width,
+        height,
+    )
 }
 
 fn parse_run_mode() -> Result<RunMode, String> {
@@ -180,4 +198,27 @@ fn print_scene_metrics(scene: &scene::Scene) {
         "AABB primitives: {before} before, {after} after ({reduction:.2}% reduction); offset: {}, {}, {}",
         scene.offset.x, scene.offset.y, scene.offset.z
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_rectangle_preserves_aspect_ratio_in_wide_window() {
+        let rectangle = fit_render_to_window(1600, 800);
+
+        assert!(((rectangle.width / rectangle.height) - (16.0 / 9.0)).abs() < 0.00001);
+        assert!(rectangle.x > 0.0);
+        assert_eq!(rectangle.y, 0.0);
+    }
+
+    #[test]
+    fn render_rectangle_preserves_aspect_ratio_in_tall_window() {
+        let rectangle = fit_render_to_window(800, 1000);
+
+        assert!(((rectangle.width / rectangle.height) - (16.0 / 9.0)).abs() < 0.00001);
+        assert_eq!(rectangle.x, 0.0);
+        assert!(rectangle.y > 0.0);
+    }
 }
