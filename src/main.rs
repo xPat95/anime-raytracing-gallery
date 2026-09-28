@@ -3,6 +3,7 @@ mod bvh;
 mod camera;
 mod cube;
 mod framebuffer;
+mod gallery;
 mod intersect;
 mod light;
 mod material;
@@ -39,18 +40,27 @@ enum RunMode {
 
 fn main() -> Result<(), String> {
     let mode = parse_run_mode()?;
-    let mut camera = Camera::scene();
-    let lighting = LightingConfig::scene();
-    let (materials, textures) = MaterialCatalog::load()?;
+    let scene_config = gallery::available_scenes()
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no scenes are registered".to_owned())?;
+    println!(
+        "Selected scene: {} ({})",
+        scene_config.display_name, scene_config.id
+    );
+    let mut camera = Camera::new(scene_config.camera);
+    let lighting = scene_config.lighting;
+    let (materials, textures) =
+        MaterialCatalog::load(&scene_config.textures, &scene_config.materials)?;
     let (scene, bvh, mut framebuffer) = match mode {
         RunMode::Compare => {
             let full_scene = scene::load(
-                "assets/scenes/proyecto.scene",
+                scene_config.scene_path,
                 |block_name| materials.for_block(block_name),
                 false,
             )?;
             let optimized_scene = scene::load(
-                "assets/scenes/proyecto.scene",
+                scene_config.scene_path,
                 |block_name| materials.for_block(block_name),
                 true,
             )?;
@@ -90,7 +100,7 @@ fn main() -> Result<(), String> {
         }
         RunMode::BenchmarkAccelerators => {
             let scene = scene::load(
-                "assets/scenes/proyecto.scene",
+                scene_config.scene_path,
                 |block_name| materials.for_block(block_name),
                 true,
             )?;
@@ -140,7 +150,7 @@ fn main() -> Result<(), String> {
         RunMode::Optimized | RunMode::Full => {
             let culling_enabled = matches!(mode, RunMode::Optimized);
             let scene = scene::load(
-                "assets/scenes/proyecto.scene",
+                scene_config.scene_path,
                 |block_name| materials.for_block(block_name),
                 culling_enabled,
             )?;
@@ -166,9 +176,10 @@ fn main() -> Result<(), String> {
         }
     };
 
+    let window_title = format!("Anime Ray Tracing Gallery - {}", scene_config.display_name);
     let (mut raylib, thread) = raylib::init()
         .size(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT)
-        .title("Black Clover Ray Tracing Skull - Imported Schematic")
+        .title(&window_title)
         .resizable()
         .build();
 

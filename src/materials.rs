@@ -1,60 +1,102 @@
+use std::collections::HashMap;
+
 use crate::{material::Material, texture::Texture};
 
-const STONE_TEXTURE: usize = 0;
-const MOSS_BLOCK_TEXTURE: usize = 1;
-const OBSIDIAN_TEXTURE: usize = 2;
-const SMOOTH_QUARTZ_TEXTURE: usize = 3;
-const NETHER_PORTAL_TEXTURE: usize = 4;
-const BLACKSTONE_TEXTURE: usize = 5;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockGeometry {
+    OpaqueCube,
+    Portal,
+    Slab,
+    Stairs,
+    Wall,
+}
+
+#[derive(Clone, Copy)]
+pub struct TextureConfig {
+    pub id: &'static str,
+    pub path: &'static str,
+    pub first_frame_height: Option<u32>,
+}
+
+#[derive(Clone, Copy)]
+pub struct MaterialConfig {
+    pub block_name: &'static str,
+    pub texture_id: &'static str,
+    pub geometry: BlockGeometry,
+    pub albedo: f32,
+    pub specular: f32,
+    pub transparency: f32,
+    pub reflectivity: f32,
+}
+
+#[derive(Clone, Copy)]
+pub struct BlockDefinition {
+    pub material: Material,
+    pub geometry: BlockGeometry,
+}
 
 pub struct MaterialCatalog {
-    pub stone: Material,
-    pub moss_block: Material,
-    pub smooth_quartz: Material,
-    pub blackstone: Material,
-    pub obsidian: Material,
-    pub nether_portal: Material,
+    definitions: HashMap<&'static str, BlockDefinition>,
 }
 
 impl MaterialCatalog {
-    pub fn load() -> Result<(Self, Vec<Texture>), String> {
-        let textures = vec![
-            Texture::load("assets/textures/stone.png")?,
-            Texture::load("assets/textures/moss_block.png")?,
-            Texture::load("assets/textures/obsidian.png")?,
-            Texture::load("assets/textures/smooth_quartz.png")?,
-            Texture::load_first_frame("assets/textures/nether_portal.png", 16)?,
-            Texture::load("assets/textures/blackstone.png")?,
-        ];
-        Ok((Self::configured(), textures))
-    }
+    pub fn load(
+        texture_configs: &[TextureConfig],
+        material_configs: &[MaterialConfig],
+    ) -> Result<(Self, Vec<Texture>), String> {
+        let mut texture_indices = HashMap::new();
+        let mut textures = Vec::with_capacity(texture_configs.len());
 
-    fn configured() -> Self {
-        Self {
-            stone: Material::textured(STONE_TEXTURE, 0.75, 0.10, 0.00, 0.03),
-            moss_block: Material::textured(MOSS_BLOCK_TEXTURE, 0.80, 0.05, 0.00, 0.01),
-            smooth_quartz: Material::textured(SMOOTH_QUARTZ_TEXTURE, 0.90, 0.30, 0.00, 0.08),
-            blackstone: Material::textured(BLACKSTONE_TEXTURE, 0.65, 0.12, 0.00, 0.04),
-            obsidian: Material::textured(OBSIDIAN_TEXTURE, 0.60, 0.65, 0.00, 0.30),
-            nether_portal: Material::textured(NETHER_PORTAL_TEXTURE, 0.85, 0.60, 0.35, 0.15),
+        for config in texture_configs {
+            if texture_indices.contains_key(config.id) {
+                return Err(format!("duplicate texture id '{}'", config.id));
+            }
+            let texture = match config.first_frame_height {
+                Some(height) => Texture::load_first_frame(config.path, height)?,
+                None => Texture::load(config.path)?,
+            };
+            texture_indices.insert(config.id, textures.len());
+            textures.push(texture);
         }
+
+        let mut definitions = HashMap::new();
+        for config in material_configs {
+            let texture_index = *texture_indices.get(config.texture_id).ok_or_else(|| {
+                format!(
+                    "material '{}' references unknown texture '{}'",
+                    config.block_name, config.texture_id
+                )
+            })?;
+            let definition = BlockDefinition {
+                material: Material::textured(
+                    texture_index,
+                    config.albedo,
+                    config.specular,
+                    config.transparency,
+                    config.reflectivity,
+                ),
+                geometry: config.geometry,
+            };
+            if definitions.insert(config.block_name, definition).is_some() {
+                return Err(format!(
+                    "duplicate material for block '{}'",
+                    config.block_name
+                ));
+            }
+        }
+
+        Ok((Self { definitions }, textures))
     }
 
-    pub fn for_block(&self, block_name: &str) -> Result<Option<Material>, String> {
-        let material = match block_name {
-            "minecraft:air" => return Ok(None),
-            "minecraft:stone" => self.stone,
-            "minecraft:moss_block" => self.moss_block,
-            "minecraft:obsidian" => self.obsidian,
-            "minecraft:smooth_quartz" => self.smooth_quartz,
-            "minecraft:nether_portal" => self.nether_portal,
-            "minecraft:blackstone_slab"
-            | "minecraft:blackstone_stairs"
-            | "minecraft:blackstone_wall" => self.blackstone,
-            _ => return Err(format!("scene contains unsupported block '{block_name}'")),
-        };
-
-        Ok(Some(material))
+    pub fn for_block(&self, block_name: &str) -> Result<Option<BlockDefinition>, String> {
+        if block_name == "minecraft:air" {
+            return Ok(None);
+        }
+        self.definitions
+            .get(block_name)
+            .copied()
+            .map(Some)
+            .ok_or_else(|| format!("scene contains unsupported block '{block_name}'"))
     }
 }
 
@@ -63,36 +105,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn configured_properties_are_normalized() {
-        let catalog = MaterialCatalog::configured();
-        for material in [
-            catalog.stone,
-            catalog.moss_block,
-            catalog.smooth_quartz,
-            catalog.blackstone,
-            catalog.obsidian,
-            catalog.nether_portal,
-        ] {
-            for value in [
-                material.albedo,
-                material.specular,
-                material.transparency,
-                material.reflectivity,
-            ] {
-                assert!((0.0..=1.0).contains(&value));
-            }
-        }
-    }
+    fn material_requires_a_configured_texture() {
+        let result = MaterialCatalog::load(
+            &[],
+            &[MaterialConfig {
+                block_name: "minecraft:test",
+                texture_id: "missing",
+                geometry: BlockGeometry::OpaqueCube,
+                albedo: 1.0,
+                specular: 0.0,
+                transparency: 0.0,
+                reflectivity: 0.0,
+            }],
+        );
 
-    #[test]
-    fn configured_materials_store_expected_optical_values() {
-        let catalog = MaterialCatalog::configured();
-
-        assert_eq!(catalog.stone.albedo, 0.75);
-        assert_eq!(catalog.nether_portal.transparency, 0.35);
-        assert_eq!(catalog.stone.transparency, 0.0);
-        assert_eq!(catalog.moss_block.transparency, 0.0);
-        assert!(catalog.obsidian.reflectivity > catalog.stone.reflectivity);
-        assert!(catalog.moss_block.specular < catalog.smooth_quartz.specular);
+        assert!(result.is_err());
     }
 }

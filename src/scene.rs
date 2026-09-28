@@ -5,7 +5,12 @@ use std::{
     path::Path,
 };
 
-use crate::{block_geometry, cube::Cube, material::Material, vec3::Vec3};
+use crate::{
+    block_geometry,
+    cube::Cube,
+    materials::{BlockDefinition, BlockGeometry},
+    vec3::Vec3,
+};
 
 pub struct Scene {
     pub primitives: Vec<Cube>,
@@ -33,7 +38,7 @@ impl Scene {
 
 pub fn load(
     path: impl AsRef<Path>,
-    material_for_block: impl Fn(&str) -> Result<Option<Material>, String>,
+    definition_for_block: impl Fn(&str) -> Result<Option<BlockDefinition>, String>,
     cull_fully_enclosed: bool,
 ) -> Result<Scene, String> {
     let path = path.as_ref();
@@ -74,10 +79,16 @@ pub fn load(
             path.display()
         )
     })?;
-    let opaque_full_positions: HashSet<[i32; 3]> = blocks
+    let mut resolved_blocks = Vec::with_capacity(blocks.len());
+    for (position, block_state) in blocks {
+        if let Some(definition) = definition_for_block(block_name(&block_state))? {
+            resolved_blocks.push((position, block_state, definition));
+        }
+    }
+    let opaque_full_positions: HashSet<[i32; 3]> = resolved_blocks
         .iter()
-        .filter_map(|(position, state)| {
-            is_opaque_full_block(block_name(state)).then_some(*position)
+        .filter_map(|(position, _, definition)| {
+            is_opaque_full_block(definition.geometry).then_some(*position)
         })
         .collect();
     let mut scene = Scene {
@@ -94,64 +105,57 @@ pub fn load(
         walls: 0,
     };
 
-    for (position, block_state) in blocks {
-        let block_name = block_name(&block_state);
+    for (position, block_state, definition) in resolved_blocks {
         let center = Vec3::new(
             position[0] as f32 + offset.x,
             position[1] as f32 + offset.y,
             position[2] as f32 + offset.z,
         );
 
-        match block_name {
-            "minecraft:blackstone_slab" => {
-                let material = required_material(&material_for_block, block_name)?;
-                scene
-                    .primitives
-                    .extend(block_geometry::slab(center, &block_state, material)?);
+        match definition.geometry {
+            BlockGeometry::Slab => {
+                scene.primitives.extend(block_geometry::slab(
+                    center,
+                    &block_state,
+                    definition.material,
+                )?);
                 scene.slabs += 1;
             }
-            "minecraft:blackstone_stairs" => {
-                let material = required_material(&material_for_block, block_name)?;
-                scene
-                    .primitives
-                    .extend(block_geometry::stairs(center, &block_state, material)?);
+            BlockGeometry::Stairs => {
+                scene.primitives.extend(block_geometry::stairs(
+                    center,
+                    &block_state,
+                    definition.material,
+                )?);
                 scene.stairs += 1;
             }
-            "minecraft:blackstone_wall" => {
-                let material = required_material(&material_for_block, block_name)?;
-                scene
-                    .primitives
-                    .extend(block_geometry::wall(center, &block_state, material)?);
+            BlockGeometry::Wall => {
+                scene.primitives.extend(block_geometry::wall(
+                    center,
+                    &block_state,
+                    definition.material,
+                )?);
                 scene.walls += 1;
             }
-            "minecraft:nether_portal" => {
-                let material = required_material(&material_for_block, block_name)?;
+            BlockGeometry::Portal => {
                 scene
                     .primitives
-                    .push(Cube::from_center_size(center, 1.0, material));
+                    .push(Cube::from_center_size(center, 1.0, definition.material));
                 scene.portal_blocks += 1;
             }
-            _ => {
-                if let Some(material) = material_for_block(block_name)? {
-                    if !is_opaque_full_block(block_name) {
-                        return Err(format!(
-                            "block '{block_name}' is not classified for conservative culling"
-                        ));
-                    }
-
-                    scene.full_blocks += 1;
-                    let fully_enclosed = is_fully_enclosed(position, &opaque_full_positions);
-                    if fully_enclosed {
-                        scene.enclosed_full_blocks += 1;
-                    }
-                    if cull_fully_enclosed && fully_enclosed {
-                        scene.culled_full_blocks += 1;
-                    } else {
-                        scene
-                            .primitives
-                            .push(Cube::from_center_size(center, 1.0, material));
-                        scene.retained_full_blocks += 1;
-                    }
+            BlockGeometry::OpaqueCube => {
+                scene.full_blocks += 1;
+                let fully_enclosed = is_fully_enclosed(position, &opaque_full_positions);
+                if fully_enclosed {
+                    scene.enclosed_full_blocks += 1;
+                }
+                if cull_fully_enclosed && fully_enclosed {
+                    scene.culled_full_blocks += 1;
+                } else {
+                    scene
+                        .primitives
+                        .push(Cube::from_center_size(center, 1.0, definition.material));
+                    scene.retained_full_blocks += 1;
                 }
             }
         }
@@ -166,14 +170,8 @@ fn block_name(block_state: &str) -> &str {
         .map_or(block_state, |value| value.0)
 }
 
-fn is_opaque_full_block(block_name: &str) -> bool {
-    matches!(
-        block_name,
-        "minecraft:stone"
-            | "minecraft:moss_block"
-            | "minecraft:smooth_quartz"
-            | "minecraft:obsidian"
-    )
+fn is_opaque_full_block(geometry: BlockGeometry) -> bool {
+    geometry == BlockGeometry::OpaqueCube
 }
 
 fn is_fully_enclosed(position: [i32; 3], opaque_full_positions: &HashSet<[i32; 3]>) -> bool {
@@ -192,15 +190,6 @@ fn is_fully_enclosed(position: [i32; 3], opaque_full_positions: &HashSet<[i32; 3
             position[1] + offset[1],
             position[2] + offset[2],
         ])
-    })
-}
-
-fn required_material(
-    material_for_block: &impl Fn(&str) -> Result<Option<Material>, String>,
-    block_name: &str,
-) -> Result<Material, String> {
-    material_for_block(block_name)?.ok_or_else(|| {
-        format!("special block '{block_name}' requires a material but none was provided")
     })
 }
 
@@ -289,17 +278,17 @@ mod tests {
 
     #[test]
     fn partial_blocks_and_portal_are_not_opaque_full_neighbors() {
-        for block_name in [
-            "minecraft:blackstone_slab",
-            "minecraft:blackstone_stairs",
-            "minecraft:blackstone_wall",
-            "minecraft:nether_portal",
+        for geometry in [
+            BlockGeometry::Slab,
+            BlockGeometry::Stairs,
+            BlockGeometry::Wall,
+            BlockGeometry::Portal,
         ] {
-            assert!(!is_opaque_full_block(block_name));
+            assert!(!is_opaque_full_block(geometry));
 
             let mut positions = enclosed_positions();
             positions.remove(&[1, 0, 0]);
-            if is_opaque_full_block(block_name) {
+            if is_opaque_full_block(geometry) {
                 positions.insert([1, 0, 0]);
             }
             assert!(!is_fully_enclosed([0, 0, 0], &positions));

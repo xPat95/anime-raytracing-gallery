@@ -298,7 +298,7 @@ mod tests {
     use raylib::prelude::Color;
 
     use super::*;
-    use crate::material::Material;
+    use crate::{camera::CameraConfig, light::PointLight, material::Material};
 
     #[test]
     fn lambert_clamps_surfaces_facing_away_from_light() {
@@ -361,8 +361,22 @@ mod tests {
             Material::new(Color::WHITE),
         )];
         let bvh = Bvh::build(&cubes);
-        let camera = Camera::scene();
-        let lighting = LightingConfig::scene();
+        let camera = Camera::new(CameraConfig::from_position(
+            Vec3::default(),
+            Vec3::new(0.0, 0.0, 30.0),
+            1.0,
+            100.0,
+        ));
+        let lighting = LightingConfig {
+            light: PointLight {
+                position: Vec3::new(-10.0, 20.0, 20.0),
+                color: Color::WHITE,
+                intensity: 1.0,
+            },
+            ambient_intensity: 0.1,
+            shadow_bias: 0.001,
+            phong_shininess: 32.0,
+        };
         let mut single = Framebuffer::new(32, 18, Color::BLACK);
         let mut multi = Framebuffer::new(32, 18, Color::BLACK);
 

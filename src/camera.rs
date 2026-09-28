@@ -2,11 +2,13 @@ use std::f32::consts::TAU;
 
 use crate::vec3::Vec3;
 
+#[cfg(test)]
 const INITIAL_POSITION: Vec3 = Vec3 {
     x: 145.0,
     y: 95.0,
     z: 180.0,
 };
+#[cfg(test)]
 const TARGET: Vec3 = Vec3 {
     x: 0.0,
     y: 0.0,
@@ -15,15 +17,39 @@ const TARGET: Vec3 = Vec3 {
 const FOV_DEGREES: f32 = 43.0;
 const MIN_PITCH: f32 = -80.0_f32.to_radians();
 const MAX_PITCH: f32 = 80.0_f32.to_radians();
-const MIN_RADIUS: f32 = 5.0;
-const MAX_RADIUS: f32 = 420.0;
 pub const MOUSE_SENSITIVITY: f32 = 0.005;
 pub const KEYBOARD_ORBIT_SPEED: f32 = 60.0_f32.to_radians();
 pub const MOUSE_PAN_SENSITIVITY: f32 = 0.1;
 pub const KEYBOARD_PAN_SPEED: f32 = 30.0;
 pub const ZOOM_SENSITIVITY: f32 = 12.0;
 
+#[derive(Clone, Copy)]
+pub struct CameraConfig {
+    pub target: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub radius: f32,
+    pub min_radius: f32,
+    pub max_radius: f32,
+}
+
+impl CameraConfig {
+    pub fn from_position(target: Vec3, position: Vec3, min_radius: f32, max_radius: f32) -> Self {
+        let offset = position - target;
+        let radius = offset.length();
+        Self {
+            target,
+            yaw: offset.x.atan2(offset.z),
+            pitch: (offset.y / radius).asin(),
+            radius,
+            min_radius,
+            max_radius,
+        }
+    }
+}
+
 pub struct Camera {
+    initial_config: CameraConfig,
     target: Vec3,
     radius: f32,
     yaw: f32,
@@ -36,17 +62,14 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn scene() -> Self {
-        let offset = INITIAL_POSITION - TARGET;
-        let radius = offset.length();
-        let yaw = offset.x.atan2(offset.z);
-        let pitch = (offset.y / radius).asin();
+    pub fn new(config: CameraConfig) -> Self {
         let mut camera = Self {
-            target: TARGET,
-            radius,
-            yaw,
-            pitch,
-            position: INITIAL_POSITION,
+            initial_config: config,
+            target: config.target,
+            radius: config.radius,
+            yaw: config.yaw,
+            pitch: config.pitch,
+            position: Vec3::default(),
             forward: Vec3::default(),
             right: Vec3::default(),
             up: Vec3::default(),
@@ -54,6 +77,16 @@ impl Camera {
         };
         camera.rebuild_basis();
         camera
+    }
+
+    #[cfg(test)]
+    pub fn scene() -> Self {
+        Self::new(CameraConfig::from_position(
+            TARGET,
+            INITIAL_POSITION,
+            5.0,
+            420.0,
+        ))
     }
 
     pub fn orbit(&mut self, mouse_delta_x: f32, mouse_delta_y: f32) -> bool {
@@ -109,19 +142,21 @@ impl Camera {
         }
 
         let previous_radius = self.radius;
-        self.radius =
-            (self.radius - wheel_movement * ZOOM_SENSITIVITY).clamp(MIN_RADIUS, MAX_RADIUS);
+        self.radius = (self.radius - wheel_movement * ZOOM_SENSITIVITY).clamp(
+            self.initial_config.min_radius,
+            self.initial_config.max_radius,
+        );
         self.rebuild_basis();
         self.radius != previous_radius
     }
 
     pub fn reset(&mut self) -> bool {
-        let initial = Self::scene();
-        let changed = self.target != initial.target
-            || self.radius != initial.radius
-            || self.yaw != initial.yaw
-            || self.pitch != initial.pitch;
-        *self = initial;
+        let config = self.initial_config;
+        let changed = self.target != config.target
+            || self.radius != config.radius
+            || self.yaw != config.yaw
+            || self.pitch != config.pitch;
+        *self = Self::new(config);
         changed
     }
 
@@ -198,9 +233,9 @@ mod tests {
         assert!(approximately_equal(camera.pitch, MIN_PITCH));
 
         camera.zoom(100_000.0);
-        assert_eq!(camera.radius, MIN_RADIUS);
+        assert_eq!(camera.radius, camera.initial_config.min_radius);
         camera.zoom(-100_000.0);
-        assert_eq!(camera.radius, MAX_RADIUS);
+        assert_eq!(camera.radius, camera.initial_config.max_radius);
     }
 
     #[test]

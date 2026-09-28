@@ -140,7 +140,7 @@ def base_block_name(block_state):
     return block_state.split("[", 1)[0]
 
 
-def convert(source, destination):
+def convert(source, destination, configured_offset=None):
     compressed = source.read_bytes()
     try:
         nbt_data = gzip.decompress(compressed)
@@ -164,13 +164,18 @@ def convert(source, destination):
     state_counts = Counter(states)
     block_counts = Counter(base_block_name(state) for state in states)
     source_hash = hashlib.sha256(compressed).hexdigest()
-    offset_x = -(width - 1) / 2
-    offset_y = -(height - 1) / 2
-    offset_z = -(length - 1) / 2
+    if configured_offset is None:
+        offset_x = -(width - 1) / 2
+        offset_y = -(height - 1) / 2
+        offset_z = -(length - 1) / 2
+        offset_source = "centered from dimensions"
+    else:
+        offset_x, offset_y, offset_z = configured_offset
+        offset_source = "provided by --offset"
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("w", encoding="utf-8", newline="\n") as output:
-        output.write("# black-clover-scene-v1\n")
+        output.write("# ray-tracing-scene-v1\n")
         output.write(f"# source_sha256={source_hash}\n")
         output.write(f"# root_name={root_name}\n")
         output.write(f"# schematic_version={schematic['Version']}\n")
@@ -192,7 +197,10 @@ def convert(source, destination):
     print(f"Minecraft data version: {schematic.get('DataVersion', 'unknown')}")
     print(f"Dimensions: {width} x {height} x {length}")
     print(f"Total positions: {total}")
+    print(f"Air: {block_counts['minecraft:air']}")
+    print(f"Non-air: {total - block_counts['minecraft:air']}")
     print(f"Palette entries: {len(palette)}")
+    print(f"Center offset: {offset_x:g}, {offset_y:g}, {offset_z:g} ({offset_source})")
     print("Block types:")
     for block_name, count in sorted(block_counts.items()):
         print(f"  {block_name}: {count}")
@@ -207,10 +215,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, help="input .schem file")
     parser.add_argument("destination", type=Path, help="output scene text file")
+    parser.add_argument(
+        "--offset",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        help="scene offset; defaults to centering from schematic dimensions",
+    )
     args = parser.parse_args()
 
     try:
-        convert(args.source, args.destination)
+        convert(args.source, args.destination, args.offset)
     except (OSError, ValueError) as error:
         parser.exit(1, f"conversion failed: {error}\n")
 
