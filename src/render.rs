@@ -48,7 +48,9 @@ fn shade_hit(hit: Intersect, textures: &[Texture]) -> Color {
         .material
         .texture_index
         .and_then(|index| textures.get(index))
-        .map_or(hit.material.albedo, |texture| texture.sample(hit.u, hit.v));
+        .map_or(hit.material.base_color, |texture| {
+            texture.sample(hit.u, hit.v)
+        });
     let normal_light =
         (hit.normal.z.abs() * 0.30 + hit.normal.x.abs() * 0.18 + hit.normal.y.abs() * 0.10)
             .clamp(0.10, 0.35);

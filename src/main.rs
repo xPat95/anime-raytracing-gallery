@@ -4,6 +4,7 @@ mod cube;
 mod framebuffer;
 mod intersect;
 mod material;
+mod materials;
 mod ray_intersect;
 mod render;
 mod scene;
@@ -14,7 +15,7 @@ use std::{env, time::Instant};
 
 use camera::Camera;
 use framebuffer::Framebuffer;
-use material::Material;
+use materials::MaterialCatalog;
 use raylib::prelude::*;
 use texture::Texture;
 use vec3::Vec3;
@@ -22,13 +23,6 @@ use vec3::Vec3;
 const RENDER_WIDTH: u32 = 240;
 const RENDER_HEIGHT: u32 = 135;
 const WINDOW_SCALE: u32 = 4;
-
-const STONE: usize = 0;
-const MOSS_BLOCK: usize = 1;
-const OBSIDIAN: usize = 2;
-const SMOOTH_QUARTZ: usize = 3;
-const NETHER_PORTAL: usize = 4;
-const BLACKSTONE: usize = 5;
 
 #[derive(Clone, Copy)]
 enum RunMode {
@@ -44,13 +38,19 @@ fn main() -> Result<(), String> {
         Vec3::new(0.0, 0.0, 0.0),
         48.0,
     );
-    let textures = load_textures()?;
+    let (materials, textures) = MaterialCatalog::load()?;
     let framebuffer = match mode {
         RunMode::Compare => {
-            let full_scene =
-                scene::load("assets/scenes/proyecto.scene", material_for_block, false)?;
-            let optimized_scene =
-                scene::load("assets/scenes/proyecto.scene", material_for_block, true)?;
+            let full_scene = scene::load(
+                "assets/scenes/proyecto.scene",
+                |block_name| materials.for_block(block_name),
+                false,
+            )?;
+            let optimized_scene = scene::load(
+                "assets/scenes/proyecto.scene",
+                |block_name| materials.for_block(block_name),
+                true,
+            )?;
             print_scene_metrics(&optimized_scene);
 
             let (full_framebuffer, full_time) =
@@ -72,7 +72,7 @@ fn main() -> Result<(), String> {
             let culling_enabled = matches!(mode, RunMode::Optimized);
             let scene = scene::load(
                 "assets/scenes/proyecto.scene",
-                material_for_block,
+                |block_name| materials.for_block(block_name),
                 culling_enabled,
             )?;
             print_scene_metrics(&scene);
@@ -165,32 +165,4 @@ fn print_scene_metrics(scene: &scene::Scene) {
         "AABB primitives: {before} before, {after} after ({reduction:.2}% reduction); offset: {}, {}, {}",
         scene.offset.x, scene.offset.y, scene.offset.z
     );
-}
-
-fn load_textures() -> Result<Vec<Texture>, String> {
-    Ok(vec![
-        Texture::load("assets/textures/stone.png")?,
-        Texture::load("assets/textures/moss_block.png")?,
-        Texture::load("assets/textures/obsidian.png")?,
-        Texture::load("assets/textures/smooth_quartz.png")?,
-        Texture::load_first_frame("assets/textures/nether_portal.png", 16)?,
-        Texture::load("assets/textures/blackstone.png")?,
-    ])
-}
-
-fn material_for_block(block_name: &str) -> Result<Option<Material>, String> {
-    let texture_index = match block_name {
-        "minecraft:air" => return Ok(None),
-        "minecraft:stone" => STONE,
-        "minecraft:moss_block" => MOSS_BLOCK,
-        "minecraft:obsidian" => OBSIDIAN,
-        "minecraft:smooth_quartz" => SMOOTH_QUARTZ,
-        "minecraft:nether_portal" => NETHER_PORTAL,
-        "minecraft:blackstone_slab"
-        | "minecraft:blackstone_stairs"
-        | "minecraft:blackstone_wall" => BLACKSTONE,
-        _ => return Err(format!("scene contains unsupported block '{block_name}'")),
-    };
-
-    Ok(Some(Material::textured(texture_index)))
 }
