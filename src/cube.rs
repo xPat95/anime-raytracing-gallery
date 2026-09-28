@@ -34,6 +34,22 @@ impl Cube {
             Vec3::new(0.0, 0.0, 1.0)
         }
     }
+
+    fn uv_at(&self, point: Vec3, normal: Vec3) -> (f32, f32) {
+        if normal.x > 0.0 {
+            (self.max.z - point.z, self.max.y - point.y)
+        } else if normal.x < 0.0 {
+            (point.z - self.min.z, self.max.y - point.y)
+        } else if normal.y > 0.0 {
+            (point.x - self.min.x, point.z - self.min.z)
+        } else if normal.y < 0.0 {
+            (point.x - self.min.x, self.max.z - point.z)
+        } else if normal.z > 0.0 {
+            (point.x - self.min.x, self.max.y - point.y)
+        } else {
+            (self.max.x - point.x, self.max.y - point.y)
+        }
+    }
 }
 
 impl RayIntersect for Cube {
@@ -76,6 +92,84 @@ impl RayIntersect for Cube {
         }
 
         let hit_point = *ray_origin + *ray_direction * distance;
-        Intersect::new(distance, self.normal_at(hit_point), self.material)
+        let normal = self.normal_at(hit_point);
+        let (u, v) = self.uv_at(hit_point, normal);
+        Intersect::new(distance, normal, u, v, self.material)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use raylib::prelude::Color;
+
+    use super::*;
+
+    #[test]
+    fn opposite_faces_keep_a_consistent_horizontal_orientation() {
+        let cube = Cube::from_center_size(Vec3::default(), 2.0, Material::new(Color::WHITE));
+
+        let front = cube.ray_intersect(&Vec3::new(0.5, 0.5, 3.0), &Vec3::new(0.0, 0.0, -1.0));
+        let back = cube.ray_intersect(&Vec3::new(0.5, 0.5, -3.0), &Vec3::new(0.0, 0.0, 1.0));
+
+        assert_eq!((front.u, front.v), (1.5, 0.5));
+        assert_eq!((back.u, back.v), (0.5, 0.5));
+    }
+
+    #[test]
+    fn maps_uv_coordinates_on_all_six_faces() {
+        let cube = Cube::from_center_size(Vec3::default(), 2.0, Material::new(Color::WHITE));
+        let cases = [
+            (
+                Vec3::new(3.0, 0.5, 0.25),
+                Vec3::new(-1.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                (0.75, 0.5),
+            ),
+            (
+                Vec3::new(-3.0, 0.5, 0.25),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(-1.0, 0.0, 0.0),
+                (1.25, 0.5),
+            ),
+            (
+                Vec3::new(0.25, 3.0, 0.5),
+                Vec3::new(0.0, -1.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                (1.25, 1.5),
+            ),
+            (
+                Vec3::new(0.25, -3.0, 0.5),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.0, -1.0, 0.0),
+                (1.25, 0.5),
+            ),
+            (
+                Vec3::new(0.25, 0.5, 3.0),
+                Vec3::new(0.0, 0.0, -1.0),
+                Vec3::new(0.0, 0.0, 1.0),
+                (1.25, 0.5),
+            ),
+            (
+                Vec3::new(0.25, 0.5, -3.0),
+                Vec3::new(0.0, 0.0, 1.0),
+                Vec3::new(0.0, 0.0, -1.0),
+                (0.75, 0.5),
+            ),
+        ];
+
+        for (origin, direction, expected_normal, expected_uv) in cases {
+            let hit = cube.ray_intersect(&origin, &direction);
+
+            assert_eq!(hit.normal, expected_normal);
+            assert_eq!((hit.u, hit.v), expected_uv);
+        }
+    }
+
+    #[test]
+    fn cube_size_controls_texture_repetition() {
+        let cube = Cube::from_center_size(Vec3::default(), 2.0, Material::new(Color::WHITE));
+        let hit = cube.ray_intersect(&Vec3::new(0.75, 0.75, 3.0), &Vec3::new(0.0, 0.0, -1.0));
+
+        assert_eq!((hit.u, hit.v), (1.75, 0.25));
     }
 }
