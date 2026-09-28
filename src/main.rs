@@ -5,37 +5,64 @@ mod intersect;
 mod material;
 mod ray_intersect;
 mod render;
+mod scene;
 mod texture;
 mod vec3;
 
+use std::time::Instant;
+
 use camera::Camera;
-use cube::Cube;
 use framebuffer::Framebuffer;
 use material::Material;
 use raylib::prelude::*;
 use texture::Texture;
 use vec3::Vec3;
 
-const WIDTH: u32 = 640;
-const HEIGHT: u32 = 360;
+const RENDER_WIDTH: u32 = 240;
+const RENDER_HEIGHT: u32 = 135;
+const WINDOW_SCALE: u32 = 4;
 
 const STONE: usize = 0;
 const MOSS_BLOCK: usize = 1;
 const OBSIDIAN: usize = 2;
-const BLACKSTONE: usize = 3;
-const SMOOTH_QUARTZ: usize = 4;
+const SMOOTH_QUARTZ: usize = 3;
+const NETHER_PORTAL: usize = 4;
 
 fn main() -> Result<(), String> {
-    let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT, Color::BLACK);
-    let camera = Camera::look_at(Vec3::new(0.0, 2.1, 7.0), Vec3::new(0.0, -0.15, -0.25), 55.0);
+    let mut framebuffer = Framebuffer::new(RENDER_WIDTH, RENDER_HEIGHT, Color::BLACK);
+    let camera = Camera::look_at(
+        Vec3::new(145.0, 95.0, 180.0),
+        Vec3::new(0.0, 0.0, 0.0),
+        48.0,
+    );
     let textures = load_textures()?;
-    let cubes = build_scene();
+    let scene = scene::load("assets/scenes/proyecto.scene", material_for_block)?;
 
-    render::render(&mut framebuffer, &camera, &cubes, &textures);
+    println!(
+        "Loaded {} cubes from a {} x {} x {} scene (offset: {}, {}, {})",
+        scene.cubes.len(),
+        scene.dimensions[0],
+        scene.dimensions[1],
+        scene.dimensions[2],
+        scene.offset.x,
+        scene.offset.y,
+        scene.offset.z
+    );
+    println!(
+        "Temporarily omitted: {} slabs, {} stairs, {} walls",
+        scene.omitted_slabs, scene.omitted_stairs, scene.omitted_walls
+    );
+    println!("Rendering {RENDER_WIDTH} x {RENDER_HEIGHT} primary rays...");
+    let render_started = Instant::now();
+    render::render(&mut framebuffer, &camera, &scene.cubes, &textures);
+    println!("Render completed in {:.2?}", render_started.elapsed());
 
     let (mut raylib, thread) = raylib::init()
-        .size(WIDTH as i32, HEIGHT as i32)
-        .title("Black Clover Ray Tracing Skull - Textured Cubes")
+        .size(
+            (RENDER_WIDTH * WINDOW_SCALE) as i32,
+            (RENDER_HEIGHT * WINDOW_SCALE) as i32,
+        )
+        .title("Black Clover Ray Tracing Skull - Imported Schematic")
         .build();
 
     raylib.set_target_fps(60);
@@ -48,51 +75,38 @@ fn main() -> Result<(), String> {
     while !raylib.window_should_close() {
         let mut drawing = raylib.begin_drawing(&thread);
         drawing.clear_background(Color::BLACK);
-        drawing.draw_texture(&texture, 0, 0, Color::WHITE);
+        drawing.draw_texture_ex(
+            &texture,
+            Vector2::new(0.0, 0.0),
+            0.0,
+            WINDOW_SCALE as f32,
+            Color::WHITE,
+        );
     }
 
     Ok(())
 }
 
 fn load_textures() -> Result<Vec<Texture>, String> {
-    [
-        "assets/textures/stone.png",
-        "assets/textures/moss_block.png",
-        "assets/textures/obsidian.png",
-        "assets/textures/blackstone.png",
-        "assets/textures/smooth_quartz.png",
-    ]
-    .into_iter()
-    .map(Texture::load)
-    .collect()
+    Ok(vec![
+        Texture::load("assets/textures/stone.png")?,
+        Texture::load("assets/textures/moss_block.png")?,
+        Texture::load("assets/textures/obsidian.png")?,
+        Texture::load("assets/textures/smooth_quartz.png")?,
+        Texture::load_first_frame("assets/textures/nether_portal.png", 16)?,
+    ])
 }
 
-fn build_scene() -> Vec<Cube> {
-    vec![
-        Cube::from_center_size(
-            Vec3::new(-1.75, -0.35, -0.15),
-            1.15,
-            Material::textured(STONE),
-        ),
-        Cube::from_center_size(
-            Vec3::new(-0.80, -0.10, -0.90),
-            1.20,
-            Material::textured(MOSS_BLOCK),
-        ),
-        Cube::from_center_size(
-            Vec3::new(0.10, -0.35, 0.15),
-            1.30,
-            Material::textured(OBSIDIAN),
-        ),
-        Cube::from_center_size(
-            Vec3::new(1.05, -0.05, -0.75),
-            1.10,
-            Material::textured(BLACKSTONE),
-        ),
-        Cube::from_center_size(
-            Vec3::new(1.85, -0.40, 0.20),
-            1.00,
-            Material::textured(SMOOTH_QUARTZ),
-        ),
-    ]
+fn material_for_block(block_name: &str) -> Result<Option<Material>, String> {
+    let texture_index = match block_name {
+        "minecraft:air" => return Ok(None),
+        "minecraft:stone" => STONE,
+        "minecraft:moss_block" => MOSS_BLOCK,
+        "minecraft:obsidian" => OBSIDIAN,
+        "minecraft:smooth_quartz" => SMOOTH_QUARTZ,
+        "minecraft:nether_portal" => NETHER_PORTAL,
+        _ => return Err(format!("scene contains unsupported block '{block_name}'")),
+    };
+
+    Ok(Some(Material::textured(texture_index)))
 }

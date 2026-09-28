@@ -11,13 +11,35 @@ pub struct Texture {
 
 impl Texture {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
+        Self::load_rows(path, None)
+    }
+
+    pub fn load_first_frame(path: impl AsRef<Path>, frame_height: u32) -> Result<Self, String> {
+        Self::load_rows(path, Some(frame_height))
+    }
+
+    fn load_rows(path: impl AsRef<Path>, frame_height: Option<u32>) -> Result<Self, String> {
         let path = path.as_ref();
         let path_text = path.to_string_lossy();
         let image = Image::load_image(&path_text)
             .map_err(|error| format!("could not load texture '{}': {error}", path.display()))?;
         let width = image.width() as u32;
-        let height = image.height() as u32;
-        let pixels = image.get_image_data().iter().copied().collect();
+        let image_height = image.height() as u32;
+        let height = frame_height.unwrap_or(image_height);
+
+        if height == 0 || height > image_height || image_height % height != 0 {
+            return Err(format!(
+                "texture '{}' has height {image_height}, incompatible with frame height {height}",
+                path.display()
+            ));
+        }
+
+        let pixels = image
+            .get_image_data()
+            .iter()
+            .take((width * height) as usize)
+            .copied()
+            .collect();
 
         Ok(Self {
             width,
