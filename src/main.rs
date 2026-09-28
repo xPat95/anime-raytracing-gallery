@@ -20,7 +20,6 @@ use light::LightingConfig;
 use materials::MaterialCatalog;
 use raylib::prelude::*;
 use texture::Texture;
-use vec3::Vec3;
 
 const RENDER_WIDTH: u32 = 480;
 const RENDER_HEIGHT: u32 = 270;
@@ -36,14 +35,10 @@ enum RunMode {
 
 fn main() -> Result<(), String> {
     let mode = parse_run_mode()?;
-    let camera = Camera::look_at(
-        Vec3::new(145.0, 95.0, 180.0),
-        Vec3::new(0.0, 0.0, 0.0),
-        43.0,
-    );
+    let mut camera = Camera::scene();
     let lighting = LightingConfig::scene();
     let (materials, textures) = MaterialCatalog::load()?;
-    let framebuffer = match mode {
+    let (scene, mut framebuffer) = match mode {
         RunMode::Compare => {
             let full_scene = scene::load(
                 "assets/scenes/proyecto.scene",
@@ -75,7 +70,7 @@ fn main() -> Result<(), String> {
                 "Render times: full {:.2?}, optimized {:.2?}",
                 full_time, optimized_time
             );
-            optimized_framebuffer
+            (optimized_scene, optimized_framebuffer)
         }
         RunMode::Optimized | RunMode::Full => {
             let culling_enabled = matches!(mode, RunMode::Optimized);
@@ -90,7 +85,8 @@ fn main() -> Result<(), String> {
             } else {
                 "full scene"
             };
-            render_scene(&camera, &scene, &textures, &lighting, label).0
+            let framebuffer = render_scene(&camera, &scene, &textures, &lighting, label).0;
+            (scene, framebuffer)
         }
     };
 
@@ -104,12 +100,38 @@ fn main() -> Result<(), String> {
     raylib.set_target_fps(60);
 
     let image = framebuffer.to_image();
-    let texture = raylib
+    let mut texture = raylib
         .load_texture_from_image(&thread, &image)
         .map_err(|error| format!("could not create texture from framebuffer: {error}"))?;
     texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
+    let mut pending_camera_render = false;
+
+    println!("Controls: left mouse drag = orbit, wheel = zoom, R = reset");
+    print_camera_state(&camera);
 
     while !raylib.window_should_close() {
+        if raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
+            let delta = raylib.get_mouse_delta();
+            pending_camera_render |= camera.orbit(delta.x, delta.y);
+        }
+
+        pending_camera_render |= camera.zoom(raylib.get_mouse_wheel_move());
+        if raylib.is_key_pressed(KeyboardKey::KEY_R) {
+            pending_camera_render |= camera.reset();
+        }
+
+        if pending_camera_render && !raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
+            print_camera_state(&camera);
+            framebuffer = render_scene(&camera, &scene, &textures, &lighting, "updated camera").0;
+            let image = framebuffer.to_image();
+            let new_texture = raylib
+                .load_texture_from_image(&thread, &image)
+                .map_err(|error| format!("could not update framebuffer texture: {error}"))?;
+            new_texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
+            texture = new_texture;
+            pending_camera_render = false;
+        }
+
         let destination =
             fit_render_to_window(raylib.get_screen_width(), raylib.get_screen_height());
         let mut drawing = raylib.begin_drawing(&thread);
@@ -125,6 +147,15 @@ fn main() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn print_camera_state(camera: &Camera) {
+    println!(
+        "Camera: yaw {:.2}°, pitch {:.2}°, distance {:.2}",
+        camera.yaw_degrees(),
+        camera.pitch_degrees(),
+        camera.radius()
+    );
 }
 
 fn fit_render_to_window(window_width: i32, window_height: i32) -> Rectangle {
