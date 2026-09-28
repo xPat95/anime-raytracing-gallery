@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs::File,
     io::{BufRead, BufReader},
     path::Path,
@@ -11,6 +12,10 @@ pub struct Scene {
     pub dimensions: [u32; 3],
     pub offset: Vec3,
     pub full_blocks: usize,
+    pub retained_full_blocks: usize,
+    pub enclosed_full_blocks: usize,
+    pub culled_full_blocks: usize,
+    pub portal_blocks: usize,
     pub slabs: usize,
     pub stairs: usize,
     pub walls: usize,
@@ -18,13 +23,18 @@ pub struct Scene {
 
 impl Scene {
     pub fn block_count(&self) -> usize {
-        self.full_blocks + self.slabs + self.stairs + self.walls
+        self.full_blocks + self.portal_blocks + self.slabs + self.stairs + self.walls
+    }
+
+    pub fn primitives_before_culling(&self) -> usize {
+        self.primitives.len() + self.culled_full_blocks
     }
 }
 
 pub fn load(
     path: impl AsRef<Path>,
     material_for_block: impl Fn(&str) -> Result<Option<Material>, String>,
+    cull_fully_enclosed: bool,
 ) -> Result<Scene, String> {
     let path = path.as_ref();
     let file = File::open(path)
@@ -64,20 +74,28 @@ pub fn load(
             path.display()
         )
     })?;
+    let opaque_full_positions: HashSet<[i32; 3]> = blocks
+        .iter()
+        .filter_map(|(position, state)| {
+            is_opaque_full_block(block_name(state)).then_some(*position)
+        })
+        .collect();
     let mut scene = Scene {
         primitives: Vec::new(),
         dimensions,
         offset,
         full_blocks: 0,
+        retained_full_blocks: 0,
+        enclosed_full_blocks: 0,
+        culled_full_blocks: 0,
+        portal_blocks: 0,
         slabs: 0,
         stairs: 0,
         walls: 0,
     };
 
     for (position, block_state) in blocks {
-        let block_name = block_state
-            .split_once('[')
-            .map_or(block_state.as_str(), |value| value.0);
+        let block_name = block_name(&block_state);
         let center = Vec3::new(
             position[0] as f32 + offset.x,
             position[1] as f32 + offset.y,
@@ -106,18 +124,75 @@ pub fn load(
                     .extend(block_geometry::wall(center, &block_state, material)?);
                 scene.walls += 1;
             }
+            "minecraft:nether_portal" => {
+                let material = required_material(&material_for_block, block_name)?;
+                scene
+                    .primitives
+                    .push(Cube::from_center_size(center, 1.0, material));
+                scene.portal_blocks += 1;
+            }
             _ => {
                 if let Some(material) = material_for_block(block_name)? {
-                    scene
-                        .primitives
-                        .push(Cube::from_center_size(center, 1.0, material));
+                    if !is_opaque_full_block(block_name) {
+                        return Err(format!(
+                            "block '{block_name}' is not classified for conservative culling"
+                        ));
+                    }
+
                     scene.full_blocks += 1;
+                    let fully_enclosed = is_fully_enclosed(position, &opaque_full_positions);
+                    if fully_enclosed {
+                        scene.enclosed_full_blocks += 1;
+                    }
+                    if cull_fully_enclosed && fully_enclosed {
+                        scene.culled_full_blocks += 1;
+                    } else {
+                        scene
+                            .primitives
+                            .push(Cube::from_center_size(center, 1.0, material));
+                        scene.retained_full_blocks += 1;
+                    }
                 }
             }
         }
     }
 
     Ok(scene)
+}
+
+fn block_name(block_state: &str) -> &str {
+    block_state
+        .split_once('[')
+        .map_or(block_state, |value| value.0)
+}
+
+fn is_opaque_full_block(block_name: &str) -> bool {
+    matches!(
+        block_name,
+        "minecraft:stone"
+            | "minecraft:moss_block"
+            | "minecraft:smooth_quartz"
+            | "minecraft:obsidian"
+    )
+}
+
+fn is_fully_enclosed(position: [i32; 3], opaque_full_positions: &HashSet<[i32; 3]>) -> bool {
+    const NEIGHBOR_OFFSETS: [[i32; 3]; 6] = [
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+    ];
+
+    NEIGHBOR_OFFSETS.iter().all(|offset| {
+        opaque_full_positions.contains(&[
+            position[0] + offset[0],
+            position[1] + offset[1],
+            position[2] + offset[2],
+        ])
+    })
 }
 
 fn required_material(
@@ -174,4 +249,60 @@ fn parse_value<T: std::str::FromStr>(
             path.display()
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn enclosed_positions() -> HashSet<[i32; 3]> {
+        [
+            [0, 0, 0],
+            [1, 0, 0],
+            [-1, 0, 0],
+            [0, 1, 0],
+            [0, -1, 0],
+            [0, 0, 1],
+            [0, 0, -1],
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    #[test]
+    fn cube_with_six_opaque_full_neighbors_is_enclosed() {
+        assert!(is_fully_enclosed([0, 0, 0], &enclosed_positions()));
+    }
+
+    #[test]
+    fn missing_neighbor_keeps_cube() {
+        let mut positions = enclosed_positions();
+        positions.remove(&[0, 1, 0]);
+
+        assert!(!is_fully_enclosed([0, 0, 0], &positions));
+    }
+
+    #[test]
+    fn surface_cube_is_not_enclosed() {
+        assert!(!is_fully_enclosed([1, 0, 0], &enclosed_positions()));
+    }
+
+    #[test]
+    fn partial_blocks_and_portal_are_not_opaque_full_neighbors() {
+        for block_name in [
+            "minecraft:blackstone_slab",
+            "minecraft:blackstone_stairs",
+            "minecraft:blackstone_wall",
+            "minecraft:nether_portal",
+        ] {
+            assert!(!is_opaque_full_block(block_name));
+
+            let mut positions = enclosed_positions();
+            positions.remove(&[1, 0, 0]);
+            if is_opaque_full_block(block_name) {
+                positions.insert([1, 0, 0]);
+            }
+            assert!(!is_fully_enclosed([0, 0, 0], &positions));
+        }
+    }
 }

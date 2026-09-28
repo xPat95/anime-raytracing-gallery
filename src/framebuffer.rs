@@ -6,6 +6,11 @@ pub struct Framebuffer {
     pixels: Vec<Color>,
 }
 
+pub struct FramebufferDifference {
+    pub different_pixels: usize,
+    pub maximum_channel_difference: u8,
+}
+
 impl Framebuffer {
     pub fn new(width: u32, height: u32, clear_color: Color) -> Self {
         Self {
@@ -39,5 +44,31 @@ impl Framebuffer {
         }
 
         image
+    }
+
+    pub fn difference(&self, other: &Self) -> Result<FramebufferDifference, String> {
+        if self.width != other.width || self.height != other.height {
+            return Err("cannot compare framebuffers with different dimensions".to_owned());
+        }
+
+        let mut different_pixels = 0;
+        let mut maximum_channel_difference = 0;
+        for (left, right) in self.pixels.iter().zip(&other.pixels) {
+            let channel_difference = left
+                .r
+                .abs_diff(right.r)
+                .max(left.g.abs_diff(right.g))
+                .max(left.b.abs_diff(right.b))
+                .max(left.a.abs_diff(right.a));
+            if channel_difference != 0 {
+                different_pixels += 1;
+                maximum_channel_difference = maximum_channel_difference.max(channel_difference);
+            }
+        }
+
+        Ok(FramebufferDifference {
+            different_pixels,
+            maximum_channel_difference,
+        })
     }
 }
