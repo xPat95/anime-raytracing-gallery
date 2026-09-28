@@ -18,7 +18,7 @@ pub struct SceneConfig {
 }
 
 pub fn available_scenes() -> Vec<SceneConfig> {
-    vec![black_clover_skull(), shenlong()]
+    vec![black_clover_skull(), shenlong(), kurama()]
 }
 
 fn black_clover_skull() -> SceneConfig {
@@ -174,15 +174,7 @@ fn shenlong() -> SceneConfig {
             0.35,
             0.12,
         ),
-        material(
-            "minecraft:glowstone",
-            "glowstone",
-            BlockGeometry::OpaqueCube,
-            0.95,
-            0.25,
-            0.00,
-            0.08,
-        ),
+        glowstone_material(),
         material(
             "minecraft:gray_terracotta",
             "gray_terracotta",
@@ -192,15 +184,7 @@ fn shenlong() -> SceneConfig {
             0.00,
             0.03,
         ),
-        material(
-            "minecraft:red_stained_glass",
-            "red_stained_glass",
-            BlockGeometry::Cube,
-            0.88,
-            0.45,
-            0.35,
-            0.12,
-        ),
+        red_stained_glass_material(),
     ];
 
     SceneConfig {
@@ -226,6 +210,105 @@ fn shenlong() -> SceneConfig {
             phong_shininess: 32.0,
         },
     }
+}
+
+fn kurama() -> SceneConfig {
+    let textures = vec![
+        texture("orange_concrete", "assets/textures/orange_concrete.png"),
+        texture("black_concrete", "assets/textures/black_concrete.png"),
+        texture("white_concrete", "assets/textures/white_concrete.png"),
+        texture("pink_concrete", "assets/textures/pink_concrete.png"),
+        texture("glowstone", "assets/textures/glowstone.png"),
+        texture("red_stained_glass", "assets/textures/red_stained_glass.png"),
+    ];
+    let materials = vec![
+        material(
+            "minecraft:orange_concrete",
+            "orange_concrete",
+            BlockGeometry::OpaqueCube,
+            0.80,
+            0.08,
+            0.00,
+            0.02,
+        ),
+        material(
+            "minecraft:black_concrete",
+            "black_concrete",
+            BlockGeometry::OpaqueCube,
+            0.72,
+            0.12,
+            0.00,
+            0.04,
+        ),
+        material(
+            "minecraft:white_concrete",
+            "white_concrete",
+            BlockGeometry::OpaqueCube,
+            0.90,
+            0.25,
+            0.00,
+            0.06,
+        ),
+        material(
+            "minecraft:pink_concrete",
+            "pink_concrete",
+            BlockGeometry::OpaqueCube,
+            0.82,
+            0.12,
+            0.00,
+            0.03,
+        ),
+        glowstone_material(),
+        red_stained_glass_material(),
+    ];
+
+    SceneConfig {
+        id: "kurama",
+        display_name: "Kurama",
+        scene_path: "assets/scenes/kurama.scene",
+        textures,
+        materials,
+        camera: CameraConfig::from_position(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(211.0, 134.0, 246.0),
+            12.0,
+            850.0,
+        ),
+        lighting: LightingConfig {
+            light: PointLight {
+                position: Vec3::new(260.0, 320.0, 300.0),
+                color: Color::new(255, 244, 224, 255),
+                intensity: 1.20,
+            },
+            ambient_intensity: 0.14,
+            shadow_bias: 0.001,
+            phong_shininess: 32.0,
+        },
+    }
+}
+
+fn glowstone_material() -> MaterialConfig {
+    material(
+        "minecraft:glowstone",
+        "glowstone",
+        BlockGeometry::OpaqueCube,
+        0.95,
+        0.25,
+        0.00,
+        0.08,
+    )
+}
+
+fn red_stained_glass_material() -> MaterialConfig {
+    material(
+        "minecraft:red_stained_glass",
+        "red_stained_glass",
+        BlockGeometry::Cube,
+        0.88,
+        0.45,
+        0.35,
+        0.12,
+    )
 }
 
 fn texture(id: &'static str, path: &'static str) -> TextureConfig {
@@ -265,13 +348,16 @@ mod tests {
     #[test]
     fn real_scenes_are_registered() {
         let scenes = available_scenes();
-        assert_eq!(scenes.len(), 2);
+        assert_eq!(scenes.len(), 3);
         assert_eq!(scenes[0].id, "black_clover_skull");
         assert_eq!(scenes[0].display_name, "Black Clover - Skull");
         assert_eq!(scenes[0].scene_path, "assets/scenes/proyecto.scene");
         assert_eq!(scenes[1].id, "shenlong");
         assert_eq!(scenes[1].display_name, "Shenlong");
         assert_eq!(scenes[1].scene_path, "assets/scenes/shenlong.scene");
+        assert_eq!(scenes[2].id, "kurama");
+        assert_eq!(scenes[2].display_name, "Kurama");
+        assert_eq!(scenes[2].scene_path, "assets/scenes/kurama.scene");
     }
 
     #[test]
@@ -366,5 +452,45 @@ mod tests {
         assert_eq!(orange_glass.transparency, 0.35);
         assert_eq!(orange_glass.geometry, BlockGeometry::Cube);
         assert_eq!(glowstone.albedo, 0.95);
+    }
+
+    #[test]
+    fn kurama_loads_its_six_materials_and_builds_a_bvh() {
+        let config = kurama();
+        let mut camera = crate::camera::Camera::new(config.camera);
+        let initial_position = camera.position();
+        let (materials, textures) =
+            MaterialCatalog::load(&config.textures, &config.materials).unwrap();
+        for block_name in [
+            "minecraft:orange_concrete",
+            "minecraft:black_concrete",
+            "minecraft:white_concrete",
+            "minecraft:pink_concrete",
+            "minecraft:glowstone",
+            "minecraft:red_stained_glass",
+        ] {
+            assert!(materials.for_block(block_name).unwrap().is_some());
+        }
+        let scene = scene::load(
+            config.scene_path,
+            |block_name| materials.for_block(block_name),
+            true,
+        )
+        .unwrap();
+        let bvh = Bvh::build(&scene.primitives);
+
+        assert_eq!(textures.len(), 6);
+        assert_eq!(scene.block_count(), 81_380);
+        assert!(!scene.primitives.is_empty());
+        assert!(bvh.node_count() > 0);
+        assert!(camera.radius() > config.camera.min_radius);
+        assert!(camera.radius() < config.camera.max_radius);
+
+        camera.orbit(20.0, -10.0);
+        camera.pan(15.0, -5.0);
+        camera.zoom(3.0);
+        assert!(camera.reset());
+        assert!((camera.position() - initial_position).length() < 0.001);
+        assert!((camera.radius() - config.camera.radius).abs() < 0.001);
     }
 }
