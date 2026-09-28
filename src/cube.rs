@@ -72,9 +72,12 @@ impl Cube {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn bounds(&self) -> (Vec3, Vec3) {
         (self.min, self.max)
+    }
+
+    pub(crate) fn centroid(&self) -> Vec3 {
+        (self.min + self.max) * 0.5
     }
 }
 

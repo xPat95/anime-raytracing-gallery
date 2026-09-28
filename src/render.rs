@@ -1,43 +1,178 @@
+use std::thread;
+
 use raylib::prelude::Color;
 
 use crate::{
-    camera::Camera, cube::Cube, framebuffer::Framebuffer, intersect::Intersect,
+    bvh::Bvh, camera::Camera, cube::Cube, framebuffer::Framebuffer, intersect::Intersect,
     light::LightingConfig, ray_intersect::RayIntersect, texture::Texture, vec3::Vec3,
 };
 
 const BACKGROUND: Color = Color::new(18, 22, 30, 255);
 
-pub fn render(
-    framebuffer: &mut Framebuffer,
-    camera: &Camera,
-    cubes: &[Cube],
-    textures: &[Texture],
-    lighting: &LightingConfig,
-) {
-    for y in 0..framebuffer.height() {
-        for x in 0..framebuffer.width() {
-            let ray_origin = camera.position();
-            let ray_direction =
-                camera.ray_direction(x, y, framebuffer.width(), framebuffer.height());
-            let closest_hit = cast_ray(&ray_origin, &ray_direction, cubes);
-            let color = match closest_hit.is_intersecting {
-                true => shade_hit(
-                    closest_hit,
-                    &ray_origin,
-                    &ray_direction,
-                    cubes,
-                    textures,
-                    lighting,
-                ),
-                false => BACKGROUND,
-            };
+#[derive(Clone, Copy, Debug)]
+pub enum RenderStrategy {
+    LinearSingleThread,
+    BvhSingleThread,
+    BvhMultiThread,
+}
 
-            framebuffer.set_pixel(x, y, color);
+#[derive(Clone, Copy)]
+enum Accelerator<'a> {
+    Linear(&'a [Cube]),
+    Bvh(&'a Bvh, &'a [Cube]),
+}
+
+impl Accelerator<'_> {
+    fn closest_hit(self, ray_origin: &Vec3, ray_direction: &Vec3) -> Intersect {
+        match self {
+            Self::Linear(cubes) => cast_ray_linear(ray_origin, ray_direction, cubes),
+            Self::Bvh(bvh, cubes) => bvh.closest_hit(ray_origin, ray_direction, cubes),
+        }
+    }
+
+    fn is_occluded(self, ray_origin: &Vec3, ray_direction: &Vec3, max_distance: f32) -> bool {
+        match self {
+            Self::Linear(cubes) => {
+                is_shadowed_linear(ray_origin, ray_direction, max_distance, cubes)
+            }
+            Self::Bvh(bvh, cubes) => {
+                bvh.is_occluded(ray_origin, ray_direction, max_distance, cubes)
+            }
         }
     }
 }
 
-fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, cubes: &[Cube]) -> Intersect {
+pub fn render(
+    framebuffer: &mut Framebuffer,
+    camera: &Camera,
+    cubes: &[Cube],
+    bvh: &Bvh,
+    textures: &[Texture],
+    lighting: &LightingConfig,
+    strategy: RenderStrategy,
+) -> usize {
+    let accelerator = match strategy {
+        RenderStrategy::LinearSingleThread => Accelerator::Linear(cubes),
+        RenderStrategy::BvhSingleThread | RenderStrategy::BvhMultiThread => {
+            Accelerator::Bvh(bvh, cubes)
+        }
+    };
+    let worker_count = match strategy {
+        RenderStrategy::BvhMultiThread => thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(1)
+            .min(framebuffer.height() as usize),
+        _ => 1,
+    };
+    let pixels = if worker_count == 1 {
+        render_rows(
+            0,
+            framebuffer.height(),
+            framebuffer.width(),
+            framebuffer.height(),
+            camera,
+            accelerator,
+            textures,
+            lighting,
+        )
+    } else {
+        render_parallel(
+            framebuffer.width(),
+            framebuffer.height(),
+            worker_count,
+            camera,
+            accelerator,
+            textures,
+            lighting,
+        )
+    };
+    framebuffer
+        .replace_pixels(pixels)
+        .expect("render produced an invalid number of pixels");
+    worker_count
+}
+
+fn render_parallel(
+    width: u32,
+    height: u32,
+    worker_count: usize,
+    camera: &Camera,
+    accelerator: Accelerator<'_>,
+    textures: &[Texture],
+    lighting: &LightingConfig,
+) -> Vec<Color> {
+    let rows_per_worker = (height as usize).div_ceil(worker_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(worker_count);
+        for worker in 0..worker_count {
+            let start_y = (worker * rows_per_worker) as u32;
+            let end_y = ((worker + 1) * rows_per_worker).min(height as usize) as u32;
+            if start_y >= end_y {
+                continue;
+            }
+            handles.push((
+                start_y,
+                scope.spawn(move || {
+                    render_rows(
+                        start_y,
+                        end_y,
+                        width,
+                        height,
+                        camera,
+                        accelerator,
+                        textures,
+                        lighting,
+                    )
+                }),
+            ));
+        }
+
+        let mut pixels = vec![BACKGROUND; (width * height) as usize];
+        for (start_y, handle) in handles {
+            let rows = handle.join().expect("render worker panicked");
+            let start = (start_y * width) as usize;
+            pixels[start..start + rows.len()].copy_from_slice(&rows);
+        }
+        pixels
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_rows(
+    start_y: u32,
+    end_y: u32,
+    width: u32,
+    height: u32,
+    camera: &Camera,
+    accelerator: Accelerator<'_>,
+    textures: &[Texture],
+    lighting: &LightingConfig,
+) -> Vec<Color> {
+    let mut pixels = Vec::with_capacity(((end_y - start_y) * width) as usize);
+    for y in start_y..end_y {
+        for x in 0..width {
+            let ray_origin = camera.position();
+            let ray_direction = camera.ray_direction(x, y, width, height);
+            let closest_hit = accelerator.closest_hit(&ray_origin, &ray_direction);
+            let color = if closest_hit.is_intersecting {
+                shade_hit(
+                    closest_hit,
+                    &ray_origin,
+                    &ray_direction,
+                    accelerator,
+                    textures,
+                    lighting,
+                )
+            } else {
+                BACKGROUND
+            };
+            pixels.push(color);
+        }
+    }
+    pixels
+}
+
+fn cast_ray_linear(ray_origin: &Vec3, ray_direction: &Vec3, cubes: &[Cube]) -> Intersect {
     let mut closest_hit = Intersect::empty();
 
     for cube in cubes {
@@ -55,7 +190,7 @@ fn shade_hit(
     hit: Intersect,
     ray_origin: &Vec3,
     ray_direction: &Vec3,
-    cubes: &[Cube],
+    accelerator: Accelerator<'_>,
     textures: &[Texture],
     lighting: &LightingConfig,
 ) -> Color {
@@ -73,8 +208,8 @@ fn shade_hit(
     let light_direction = to_light / light_distance;
     let diffuse_angle = lambert(normal, light_direction);
     let shadow_origin = hit_point + normal * lighting.shadow_bias;
-    let shadowed =
-        diffuse_angle > 0.0 && is_shadowed(&shadow_origin, &light_direction, light_distance, cubes);
+    let shadowed = diffuse_angle > 0.0
+        && accelerator.is_occluded(&shadow_origin, &light_direction, light_distance);
 
     let diffuse = if shadowed {
         0.0
@@ -138,7 +273,7 @@ fn phong_specular(
         * light_intensity
 }
 
-fn is_shadowed(
+fn is_shadowed_linear(
     shadow_origin: &Vec3,
     light_direction: &Vec3,
     light_distance: f32,
@@ -199,8 +334,13 @@ mod tests {
             material,
         )];
 
-        assert!(is_shadowed(&origin, &direction, 10.0, &before_light));
-        assert!(!is_shadowed(&origin, &direction, 10.0, &behind_light));
+        assert!(is_shadowed_linear(&origin, &direction, 10.0, &before_light));
+        assert!(!is_shadowed_linear(
+            &origin,
+            &direction,
+            10.0,
+            &behind_light
+        ));
     }
 
     #[test]
@@ -210,6 +350,43 @@ mod tests {
         let surface_point = Vec3::new(0.0, 0.0, 0.5);
         let biased_origin = surface_point + normal * 0.001;
 
-        assert!(!is_shadowed(&biased_origin, &normal, 10.0, &[cube]));
+        assert!(!is_shadowed_linear(&biased_origin, &normal, 10.0, &[cube]));
+    }
+
+    #[test]
+    fn single_and_multithread_bvh_framebuffers_match() {
+        let cubes = [Cube::from_center_size(
+            Vec3::default(),
+            20.0,
+            Material::new(Color::WHITE),
+        )];
+        let bvh = Bvh::build(&cubes);
+        let camera = Camera::scene();
+        let lighting = LightingConfig::scene();
+        let mut single = Framebuffer::new(32, 18, Color::BLACK);
+        let mut multi = Framebuffer::new(32, 18, Color::BLACK);
+
+        render(
+            &mut single,
+            &camera,
+            &cubes,
+            &bvh,
+            &[],
+            &lighting,
+            RenderStrategy::BvhSingleThread,
+        );
+        render(
+            &mut multi,
+            &camera,
+            &cubes,
+            &bvh,
+            &[],
+            &lighting,
+            RenderStrategy::BvhMultiThread,
+        );
+
+        let difference = single.difference(&multi).unwrap();
+        assert_eq!(difference.different_pixels, 0);
+        assert_eq!(difference.maximum_channel_difference, 0);
     }
 }

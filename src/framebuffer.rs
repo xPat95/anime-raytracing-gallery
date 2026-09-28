@@ -28,9 +28,16 @@ impl Framebuffer {
         self.height
     }
 
-    pub fn set_pixel(&mut self, x: u32, y: u32, color: Color) {
-        let index = (y * self.width + x) as usize;
-        self.pixels[index] = color;
+    pub fn replace_pixels(&mut self, pixels: Vec<Color>) -> Result<(), String> {
+        if pixels.len() != self.pixels.len() {
+            return Err(format!(
+                "framebuffer expected {} pixels, received {}",
+                self.pixels.len(),
+                pixels.len()
+            ));
+        }
+        self.pixels = pixels;
+        Ok(())
     }
 
     pub fn to_image(&self) -> Image {

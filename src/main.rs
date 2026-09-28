@@ -1,4 +1,5 @@
 mod block_geometry;
+mod bvh;
 mod camera;
 mod cube;
 mod framebuffer;
@@ -14,11 +15,13 @@ mod vec3;
 
 use std::{env, time::Instant};
 
+use bvh::Bvh;
 use camera::Camera;
 use framebuffer::Framebuffer;
 use light::LightingConfig;
 use materials::MaterialCatalog;
 use raylib::prelude::*;
+use render::RenderStrategy;
 use texture::Texture;
 
 const RENDER_WIDTH: u32 = 480;
@@ -31,6 +34,7 @@ enum RunMode {
     Optimized,
     Full,
     Compare,
+    BenchmarkAccelerators,
 }
 
 fn main() -> Result<(), String> {
@@ -38,7 +42,7 @@ fn main() -> Result<(), String> {
     let mut camera = Camera::scene();
     let lighting = LightingConfig::scene();
     let (materials, textures) = MaterialCatalog::load()?;
-    let (scene, mut framebuffer) = match mode {
+    let (scene, bvh, mut framebuffer) = match mode {
         RunMode::Compare => {
             let full_scene = scene::load(
                 "assets/scenes/proyecto.scene",
@@ -51,14 +55,26 @@ fn main() -> Result<(), String> {
                 true,
             )?;
             print_scene_metrics(&optimized_scene);
+            let full_bvh = Bvh::build(&full_scene.primitives);
+            let optimized_bvh = Bvh::build(&optimized_scene.primitives);
+            print_bvh_metrics(&optimized_bvh);
 
-            let (full_framebuffer, full_time) =
-                render_scene(&camera, &full_scene, &textures, &lighting, "full scene");
-            let (optimized_framebuffer, optimized_time) = render_scene(
+            let (full_framebuffer, full_time, _) = render_scene(
                 &camera,
-                &optimized_scene,
+                &full_scene,
+                &full_bvh,
                 &textures,
                 &lighting,
+                RenderStrategy::BvhMultiThread,
+                "full scene",
+            );
+            let (optimized_framebuffer, optimized_time, _) = render_scene(
+                &camera,
+                &optimized_scene,
+                &optimized_bvh,
+                &textures,
+                &lighting,
+                RenderStrategy::BvhMultiThread,
                 "optimized scene",
             );
             let difference = full_framebuffer.difference(&optimized_framebuffer)?;
@@ -70,7 +86,56 @@ fn main() -> Result<(), String> {
                 "Render times: full {:.2?}, optimized {:.2?}",
                 full_time, optimized_time
             );
-            (optimized_scene, optimized_framebuffer)
+            (optimized_scene, optimized_bvh, optimized_framebuffer)
+        }
+        RunMode::BenchmarkAccelerators => {
+            let scene = scene::load(
+                "assets/scenes/proyecto.scene",
+                |block_name| materials.for_block(block_name),
+                true,
+            )?;
+            print_scene_metrics(&scene);
+            let bvh = Bvh::build(&scene.primitives);
+            print_bvh_metrics(&bvh);
+            let (linear, linear_time, _) = render_scene(
+                &camera,
+                &scene,
+                &bvh,
+                &textures,
+                &lighting,
+                RenderStrategy::LinearSingleThread,
+                "linear single-thread",
+            );
+            let (bvh_single, bvh_time, _) = render_scene(
+                &camera,
+                &scene,
+                &bvh,
+                &textures,
+                &lighting,
+                RenderStrategy::BvhSingleThread,
+                "BVH single-thread",
+            );
+            print_framebuffer_comparison("linear vs BVH", &linear, &bvh_single)?;
+            let (bvh_multi, multi_time, workers) = render_scene(
+                &camera,
+                &scene,
+                &bvh,
+                &textures,
+                &lighting,
+                RenderStrategy::BvhMultiThread,
+                "BVH multi-thread",
+            );
+            print_framebuffer_comparison("BVH single vs multi", &bvh_single, &bvh_multi)?;
+            println!(
+                "Benchmark: linear {:.2?}, BVH {:.2?} ({:.2}x), BVH multi {:.2?} ({:.2}x total, {:.2}x vs BVH, {workers} workers)",
+                linear_time,
+                bvh_time,
+                linear_time.as_secs_f64() / bvh_time.as_secs_f64(),
+                multi_time,
+                linear_time.as_secs_f64() / multi_time.as_secs_f64(),
+                bvh_time.as_secs_f64() / multi_time.as_secs_f64(),
+            );
+            (scene, bvh, bvh_multi)
         }
         RunMode::Optimized | RunMode::Full => {
             let culling_enabled = matches!(mode, RunMode::Optimized);
@@ -80,13 +145,24 @@ fn main() -> Result<(), String> {
                 culling_enabled,
             )?;
             print_scene_metrics(&scene);
+            let bvh = Bvh::build(&scene.primitives);
+            print_bvh_metrics(&bvh);
             let label = if culling_enabled {
                 "optimized scene"
             } else {
                 "full scene"
             };
-            let framebuffer = render_scene(&camera, &scene, &textures, &lighting, label).0;
-            (scene, framebuffer)
+            let framebuffer = render_scene(
+                &camera,
+                &scene,
+                &bvh,
+                &textures,
+                &lighting,
+                RenderStrategy::BvhMultiThread,
+                label,
+            )
+            .0;
+            (scene, bvh, framebuffer)
         }
     };
 
@@ -122,7 +198,16 @@ fn main() -> Result<(), String> {
 
         if pending_camera_render && !raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
             print_camera_state(&camera);
-            framebuffer = render_scene(&camera, &scene, &textures, &lighting, "updated camera").0;
+            framebuffer = render_scene(
+                &camera,
+                &scene,
+                &bvh,
+                &textures,
+                &lighting,
+                RenderStrategy::BvhMultiThread,
+                "updated camera",
+            )
+            .0;
             let image = framebuffer.to_image();
             let new_texture = raylib
                 .load_texture_from_image(&thread, &image)
@@ -177,8 +262,9 @@ fn parse_run_mode() -> Result<RunMode, String> {
         None => Ok(RunMode::Optimized),
         Some("--no-culling") => Ok(RunMode::Full),
         Some("--compare-culling") => Ok(RunMode::Compare),
+        Some("--benchmark-accelerators") => Ok(RunMode::BenchmarkAccelerators),
         Some(argument) => Err(format!(
-            "unknown argument '{argument}'; use --no-culling or --compare-culling"
+            "unknown argument '{argument}'; use --no-culling, --compare-culling, or --benchmark-accelerators"
         )),
     }
 }
@@ -186,23 +272,49 @@ fn parse_run_mode() -> Result<RunMode, String> {
 fn render_scene(
     camera: &Camera,
     scene: &scene::Scene,
+    bvh: &Bvh,
     textures: &[Texture],
     lighting: &LightingConfig,
+    strategy: RenderStrategy,
     label: &str,
-) -> (Framebuffer, std::time::Duration) {
+) -> (Framebuffer, std::time::Duration, usize) {
     let mut framebuffer = Framebuffer::new(RENDER_WIDTH, RENDER_HEIGHT, Color::BLACK);
     println!("Rendering {label} at {RENDER_WIDTH} x {RENDER_HEIGHT}...");
     let started = Instant::now();
-    render::render(
+    let workers = render::render(
         &mut framebuffer,
         camera,
         &scene.primitives,
+        bvh,
         textures,
         lighting,
+        strategy,
     );
     let elapsed = started.elapsed();
     println!("{label} completed in {elapsed:.2?}");
-    (framebuffer, elapsed)
+    (framebuffer, elapsed, workers)
+}
+
+fn print_framebuffer_comparison(
+    label: &str,
+    left: &Framebuffer,
+    right: &Framebuffer,
+) -> Result<(), String> {
+    let difference = left.difference(right)?;
+    println!(
+        "{label}: {} different pixels, maximum channel difference {}",
+        difference.different_pixels, difference.maximum_channel_difference
+    );
+    Ok(())
+}
+
+fn print_bvh_metrics(bvh: &Bvh) {
+    println!(
+        "BVH: {} nodes, maximum depth {}, leaf size {}",
+        bvh.node_count(),
+        bvh.max_depth(),
+        bvh::LEAF_SIZE
+    );
 }
 
 fn print_scene_metrics(scene: &scene::Scene) {
