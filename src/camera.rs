@@ -15,9 +15,12 @@ const TARGET: Vec3 = Vec3 {
 const FOV_DEGREES: f32 = 43.0;
 const MIN_PITCH: f32 = -80.0_f32.to_radians();
 const MAX_PITCH: f32 = 80.0_f32.to_radians();
-const MIN_RADIUS: f32 = 150.0;
+const MIN_RADIUS: f32 = 5.0;
 const MAX_RADIUS: f32 = 420.0;
 pub const MOUSE_SENSITIVITY: f32 = 0.005;
+pub const KEYBOARD_ORBIT_SPEED: f32 = 60.0_f32.to_radians();
+pub const MOUSE_PAN_SENSITIVITY: f32 = 0.1;
+pub const KEYBOARD_PAN_SPEED: f32 = 30.0;
 pub const ZOOM_SENSITIVITY: f32 = 12.0;
 
 pub struct Camera {
@@ -64,6 +67,42 @@ impl Camera {
         true
     }
 
+    pub fn orbit_keyboard(&mut self, horizontal: f32, vertical: f32, frame_time: f32) -> bool {
+        if horizontal == 0.0 && vertical == 0.0 {
+            return false;
+        }
+
+        self.yaw = (self.yaw + horizontal * KEYBOARD_ORBIT_SPEED * frame_time).rem_euclid(TAU);
+        self.pitch =
+            (self.pitch + vertical * KEYBOARD_ORBIT_SPEED * frame_time).clamp(MIN_PITCH, MAX_PITCH);
+        self.rebuild_basis();
+        true
+    }
+
+    pub fn pan(&mut self, mouse_delta_x: f32, mouse_delta_y: f32) -> bool {
+        if mouse_delta_x == 0.0 && mouse_delta_y == 0.0 {
+            return false;
+        }
+
+        self.translate_target(
+            mouse_delta_x * MOUSE_PAN_SENSITIVITY,
+            -mouse_delta_y * MOUSE_PAN_SENSITIVITY,
+        );
+        true
+    }
+
+    pub fn pan_keyboard(&mut self, horizontal: f32, vertical: f32, frame_time: f32) -> bool {
+        if horizontal == 0.0 && vertical == 0.0 {
+            return false;
+        }
+
+        self.translate_target(
+            horizontal * KEYBOARD_PAN_SPEED * frame_time,
+            vertical * KEYBOARD_PAN_SPEED * frame_time,
+        );
+        true
+    }
+
     pub fn zoom(&mut self, wheel_movement: f32) -> bool {
         if wheel_movement == 0.0 {
             return false;
@@ -78,7 +117,10 @@ impl Camera {
 
     pub fn reset(&mut self) -> bool {
         let initial = Self::scene();
-        let changed = self.position != initial.position;
+        let changed = self.target != initial.target
+            || self.radius != initial.radius
+            || self.yaw != initial.yaw
+            || self.pitch != initial.pitch;
         *self = initial;
         changed
     }
@@ -122,6 +164,11 @@ impl Camera {
         self.right = self.forward.cross(Vec3::new(0.0, 1.0, 0.0)).normalize();
         self.up = self.right.cross(self.forward).normalize();
     }
+
+    fn translate_target(&mut self, horizontal: f32, vertical: f32) {
+        self.target = self.target + self.right * horizontal + self.up * vertical;
+        self.rebuild_basis();
+    }
 }
 
 #[cfg(test)]
@@ -161,8 +208,11 @@ mod tests {
         let mut camera = Camera::scene();
         camera.orbit(50.0, -25.0);
         camera.zoom(2.0);
+        camera.pan(30.0, -20.0);
 
         assert!(camera.reset());
+        assert_eq!(camera.target, TARGET);
+        assert!(approximately_equal(camera.radius, Camera::scene().radius));
         assert!(approximately_equal(camera.position.x, INITIAL_POSITION.x));
         assert!(approximately_equal(camera.position.y, INITIAL_POSITION.y));
         assert!(approximately_equal(camera.position.z, INITIAL_POSITION.z));
@@ -179,5 +229,53 @@ mod tests {
         assert!(approximately_equal(camera.forward.dot(camera.right), 0.0));
         assert!(approximately_equal(camera.forward.dot(camera.up), 0.0));
         assert!(approximately_equal(camera.right.dot(camera.up), 0.0));
+    }
+
+    #[test]
+    fn keyboard_orbit_uses_yaw_pitch_and_pitch_limits() {
+        let mut camera = Camera::scene();
+        let initial_yaw = camera.yaw;
+        let initial_pitch = camera.pitch;
+
+        camera.orbit_keyboard(1.0, 1.0, 0.5);
+
+        assert!(camera.yaw > initial_yaw);
+        assert!(camera.pitch > initial_pitch);
+        camera.orbit_keyboard(0.0, 1.0, 100.0);
+        assert!(approximately_equal(camera.pitch, MAX_PITCH));
+    }
+
+    #[test]
+    fn pan_moves_target_without_changing_orbit_parameters() {
+        let mut camera = Camera::scene();
+        let initial_target = camera.target;
+        let initial_position = camera.position;
+        let initial_yaw = camera.yaw;
+        let initial_pitch = camera.pitch;
+        let initial_radius = camera.radius;
+
+        camera.pan(20.0, -10.0);
+
+        let translation = camera.target - initial_target;
+        assert_ne!(camera.target, initial_target);
+        assert!(((camera.position - initial_position) - translation).length() < 0.001);
+        assert_eq!(camera.yaw, initial_yaw);
+        assert_eq!(camera.pitch, initial_pitch);
+        assert_eq!(camera.radius, initial_radius);
+    }
+
+    #[test]
+    fn orbit_after_pan_uses_displaced_target() {
+        let mut camera = Camera::scene();
+        camera.pan_keyboard(1.0, 1.0, 0.5);
+        let displaced_target = camera.target;
+
+        camera.orbit_keyboard(1.0, 0.0, 0.5);
+
+        assert_eq!(camera.target, displaced_target);
+        assert!(approximately_equal(
+            (camera.position - camera.target).length(),
+            camera.radius
+        ));
     }
 }

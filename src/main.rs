@@ -182,21 +182,45 @@ fn main() -> Result<(), String> {
     texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
     let mut pending_camera_render = false;
 
-    println!("Controls: left mouse drag = orbit, wheel = zoom, R = reset");
+    println!(
+        "Controls: LMB drag = orbit, WASD = orbit, RMB drag = pan, arrow keys = pan, mouse wheel = zoom, R = reset"
+    );
     print_camera_state(&camera);
 
     while !raylib.window_should_close() {
-        if raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
-            let delta = raylib.get_mouse_delta();
+        let left_mouse_down = raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT);
+        let right_mouse_down = raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT);
+        let mouse_delta = raylib.get_mouse_delta();
+        if left_mouse_down {
+            let delta = mouse_delta;
             pending_camera_render |= camera.orbit(delta.x, delta.y);
         }
+        if right_mouse_down {
+            let delta = mouse_delta;
+            pending_camera_render |= camera.pan(delta.x, delta.y);
+        }
+
+        let orbit_horizontal = key_axis(&raylib, KeyboardKey::KEY_A, KeyboardKey::KEY_D);
+        let orbit_vertical = key_axis(&raylib, KeyboardKey::KEY_S, KeyboardKey::KEY_W);
+        let pan_horizontal = key_axis(&raylib, KeyboardKey::KEY_LEFT, KeyboardKey::KEY_RIGHT);
+        let pan_vertical = key_axis(&raylib, KeyboardKey::KEY_DOWN, KeyboardKey::KEY_UP);
+        let frame_time = raylib.get_frame_time();
+        pending_camera_render |=
+            camera.orbit_keyboard(orbit_horizontal, orbit_vertical, frame_time);
+        pending_camera_render |= camera.pan_keyboard(pan_horizontal, pan_vertical, frame_time);
 
         pending_camera_render |= camera.zoom(raylib.get_mouse_wheel_move());
         if raylib.is_key_pressed(KeyboardKey::KEY_R) {
             pending_camera_render |= camera.reset();
         }
 
-        if pending_camera_render && !raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
+        let continuous_input_active = left_mouse_down
+            || right_mouse_down
+            || orbit_horizontal != 0.0
+            || orbit_vertical != 0.0
+            || pan_horizontal != 0.0
+            || pan_vertical != 0.0;
+        if pending_camera_render && !continuous_input_active {
             print_camera_state(&camera);
             framebuffer = render_scene(
                 &camera,
@@ -241,6 +265,12 @@ fn print_camera_state(camera: &Camera) {
         camera.pitch_degrees(),
         camera.radius()
     );
+}
+
+fn key_axis(raylib: &RaylibHandle, negative: KeyboardKey, positive: KeyboardKey) -> f32 {
+    let negative = raylib.is_key_down(negative) as u8 as f32;
+    let positive = raylib.is_key_down(positive) as u8 as f32;
+    positive - negative
 }
 
 fn fit_render_to_window(window_width: i32, window_height: i32) -> Rectangle {
