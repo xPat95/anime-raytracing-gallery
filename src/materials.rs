@@ -5,6 +5,7 @@ use crate::{material::Material, texture::Texture};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockGeometry {
     OpaqueCube,
+    Cube,
     Portal,
     Slab,
     Stairs,

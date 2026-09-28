@@ -38,12 +38,18 @@ enum RunMode {
     BenchmarkAccelerators,
 }
 
+struct AppOptions {
+    mode: RunMode,
+    scene_id: String,
+}
+
 fn main() -> Result<(), String> {
-    let mode = parse_run_mode()?;
+    let options = parse_options()?;
+    let mode = options.mode;
     let scene_config = gallery::available_scenes()
         .into_iter()
-        .next()
-        .ok_or_else(|| "no scenes are registered".to_owned())?;
+        .find(|config| config.id == options.scene_id)
+        .ok_or_else(|| format!("unknown scene '{}'", options.scene_id))?;
     println!(
         "Selected scene: {} ({})",
         scene_config.display_name, scene_config.id
@@ -65,8 +71,8 @@ fn main() -> Result<(), String> {
                 true,
             )?;
             print_scene_metrics(&optimized_scene);
-            let full_bvh = Bvh::build(&full_scene.primitives);
-            let optimized_bvh = Bvh::build(&optimized_scene.primitives);
+            let full_bvh = build_bvh(&full_scene.primitives);
+            let optimized_bvh = build_bvh(&optimized_scene.primitives);
             print_bvh_metrics(&optimized_bvh);
 
             let (full_framebuffer, full_time, _) = render_scene(
@@ -105,7 +111,7 @@ fn main() -> Result<(), String> {
                 true,
             )?;
             print_scene_metrics(&scene);
-            let bvh = Bvh::build(&scene.primitives);
+            let bvh = build_bvh(&scene.primitives);
             print_bvh_metrics(&bvh);
             let (linear, linear_time, _) = render_scene(
                 &camera,
@@ -155,7 +161,7 @@ fn main() -> Result<(), String> {
                 culling_enabled,
             )?;
             print_scene_metrics(&scene);
-            let bvh = Bvh::build(&scene.primitives);
+            let bvh = build_bvh(&scene.primitives);
             print_bvh_metrics(&bvh);
             let label = if culling_enabled {
                 "optimized scene"
@@ -298,16 +304,33 @@ fn fit_render_to_window(window_width: i32, window_height: i32) -> Rectangle {
     )
 }
 
-fn parse_run_mode() -> Result<RunMode, String> {
-    match env::args().nth(1).as_deref() {
-        None => Ok(RunMode::Optimized),
-        Some("--no-culling") => Ok(RunMode::Full),
-        Some("--compare-culling") => Ok(RunMode::Compare),
-        Some("--benchmark-accelerators") => Ok(RunMode::BenchmarkAccelerators),
-        Some(argument) => Err(format!(
-            "unknown argument '{argument}'; use --no-culling, --compare-culling, or --benchmark-accelerators"
-        )),
+fn parse_options() -> Result<AppOptions, String> {
+    let mut mode = RunMode::Optimized;
+    let mut scene_id = "black_clover_skull".to_owned();
+    let mut arguments = env::args().skip(1);
+
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--scene" => {
+                scene_id = arguments
+                    .next()
+                    .ok_or_else(|| "--scene requires a scene id".to_owned())?;
+            }
+            "--no-culling" => mode = RunMode::Full,
+            "--compare-culling" => mode = RunMode::Compare,
+            "--benchmark-accelerators" => mode = RunMode::BenchmarkAccelerators,
+            _ => return Err(format!("unknown argument '{argument}'")),
+        }
     }
+
+    Ok(AppOptions { mode, scene_id })
+}
+
+fn build_bvh(primitives: &[crate::cube::Cube]) -> Bvh {
+    let started = Instant::now();
+    let bvh = Bvh::build(primitives);
+    println!("BVH built in {:.2?}", started.elapsed());
+    bvh
 }
 
 fn render_scene(
@@ -371,7 +394,7 @@ fn print_scene_metrics(scene: &scene::Scene) {
         scene.dimensions[2]
     );
     println!(
-        "Opaque full blocks: {} original, {} enclosed, {} retained",
+        "Full cube blocks: {} original, {} opaque enclosed, {} retained",
         scene.full_blocks, scene.enclosed_full_blocks, scene.retained_full_blocks
     );
     println!(

@@ -18,7 +18,7 @@ pub struct SceneConfig {
 }
 
 pub fn available_scenes() -> Vec<SceneConfig> {
-    vec![black_clover_skull()]
+    vec![black_clover_skull(), shenlong()]
 }
 
 fn black_clover_skull() -> SceneConfig {
@@ -134,6 +134,100 @@ fn black_clover_skull() -> SceneConfig {
     }
 }
 
+fn shenlong() -> SceneConfig {
+    let textures = vec![
+        texture("green_concrete", "assets/textures/green_concrete.png"),
+        texture("terracotta", "assets/textures/terracotta.png"),
+        texture(
+            "orange_stained_glass",
+            "assets/textures/orange_stained_glass.png",
+        ),
+        texture("glowstone", "assets/textures/glowstone.png"),
+        texture("gray_terracotta", "assets/textures/gray_terracotta.png"),
+        texture("red_stained_glass", "assets/textures/red_stained_glass.png"),
+    ];
+    let materials = vec![
+        material(
+            "minecraft:green_concrete",
+            "green_concrete",
+            BlockGeometry::OpaqueCube,
+            0.78,
+            0.08,
+            0.00,
+            0.02,
+        ),
+        material(
+            "minecraft:terracotta",
+            "terracotta",
+            BlockGeometry::OpaqueCube,
+            0.75,
+            0.10,
+            0.00,
+            0.03,
+        ),
+        material(
+            "minecraft:orange_stained_glass",
+            "orange_stained_glass",
+            BlockGeometry::Cube,
+            0.88,
+            0.45,
+            0.35,
+            0.12,
+        ),
+        material(
+            "minecraft:glowstone",
+            "glowstone",
+            BlockGeometry::OpaqueCube,
+            0.95,
+            0.25,
+            0.00,
+            0.08,
+        ),
+        material(
+            "minecraft:gray_terracotta",
+            "gray_terracotta",
+            BlockGeometry::OpaqueCube,
+            0.72,
+            0.10,
+            0.00,
+            0.03,
+        ),
+        material(
+            "minecraft:red_stained_glass",
+            "red_stained_glass",
+            BlockGeometry::Cube,
+            0.88,
+            0.45,
+            0.35,
+            0.12,
+        ),
+    ];
+
+    SceneConfig {
+        id: "shenlong",
+        display_name: "Shenlong",
+        scene_path: "assets/scenes/shenlong.scene",
+        textures,
+        materials,
+        camera: CameraConfig::from_position(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(205.0, 140.0, 248.0),
+            5.0,
+            550.0,
+        ),
+        lighting: LightingConfig {
+            light: PointLight {
+                position: Vec3::new(140.0, 220.0, 200.0),
+                color: Color::new(255, 244, 224, 255),
+                intensity: 1.15,
+            },
+            ambient_intensity: 0.14,
+            shadow_bias: 0.001,
+            phong_shininess: 32.0,
+        },
+    }
+}
+
 fn texture(id: &'static str, path: &'static str) -> TextureConfig {
     TextureConfig {
         id,
@@ -169,12 +263,15 @@ mod tests {
     use crate::{bvh::Bvh, materials::MaterialCatalog, scene};
 
     #[test]
-    fn black_clover_is_the_only_registered_scene() {
+    fn real_scenes_are_registered() {
         let scenes = available_scenes();
-        assert_eq!(scenes.len(), 1);
+        assert_eq!(scenes.len(), 2);
         assert_eq!(scenes[0].id, "black_clover_skull");
         assert_eq!(scenes[0].display_name, "Black Clover - Skull");
         assert_eq!(scenes[0].scene_path, "assets/scenes/proyecto.scene");
+        assert_eq!(scenes[1].id, "shenlong");
+        assert_eq!(scenes[1].display_name, "Shenlong");
+        assert_eq!(scenes[1].scene_path, "assets/scenes/shenlong.scene");
     }
 
     #[test]
@@ -215,5 +312,59 @@ mod tests {
         assert_eq!(scene.walls, 64);
         assert_eq!(scene.primitives.len(), 23_443);
         assert!(bvh.node_count() > 0);
+    }
+
+    #[test]
+    fn shenlong_loads_its_six_materials_and_builds_a_bvh() {
+        let config = shenlong();
+        let mut camera = crate::camera::Camera::new(config.camera);
+        let initial_position = camera.position();
+        let (materials, textures) =
+            MaterialCatalog::load(&config.textures, &config.materials).unwrap();
+        for block_name in [
+            "minecraft:green_concrete",
+            "minecraft:terracotta",
+            "minecraft:orange_stained_glass",
+            "minecraft:glowstone",
+            "minecraft:gray_terracotta",
+            "minecraft:red_stained_glass",
+        ] {
+            assert!(materials.for_block(block_name).unwrap().is_some());
+        }
+        let scene = scene::load(
+            config.scene_path,
+            |block_name| materials.for_block(block_name),
+            true,
+        )
+        .unwrap();
+        let bvh = Bvh::build(&scene.primitives);
+
+        assert_eq!(textures.len(), 6);
+        assert_eq!(scene.block_count(), 30_915);
+        assert_eq!(scene.primitives.len(), 29_283);
+        assert!(bvh.node_count() > 0);
+        assert!(camera.radius() > config.camera.min_radius);
+        assert!(camera.radius() < config.camera.max_radius);
+
+        camera.orbit(20.0, -10.0);
+        camera.pan(15.0, -5.0);
+        camera.zoom(3.0);
+        assert!(camera.reset());
+        assert!((camera.position() - initial_position).length() < 0.001);
+        assert!((camera.radius() - config.camera.radius).abs() < 0.001);
+
+        let orange_glass = config
+            .materials
+            .iter()
+            .find(|material| material.block_name == "minecraft:orange_stained_glass")
+            .unwrap();
+        let glowstone = config
+            .materials
+            .iter()
+            .find(|material| material.block_name == "minecraft:glowstone")
+            .unwrap();
+        assert_eq!(orange_glass.transparency, 0.35);
+        assert_eq!(orange_glass.geometry, BlockGeometry::Cube);
+        assert_eq!(glowstone.albedo, 0.95);
     }
 }

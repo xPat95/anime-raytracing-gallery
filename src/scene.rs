@@ -113,6 +113,13 @@ pub fn load(
         );
 
         match definition.geometry {
+            BlockGeometry::Cube => {
+                scene.full_blocks += 1;
+                scene
+                    .primitives
+                    .push(Cube::from_center_size(center, 1.0, definition.material));
+                scene.retained_full_blocks += 1;
+            }
             BlockGeometry::Slab => {
                 scene.primitives.extend(block_geometry::slab(
                     center,
@@ -279,6 +286,7 @@ mod tests {
     #[test]
     fn partial_blocks_and_portal_are_not_opaque_full_neighbors() {
         for geometry in [
+            BlockGeometry::Cube,
             BlockGeometry::Slab,
             BlockGeometry::Stairs,
             BlockGeometry::Wall,
