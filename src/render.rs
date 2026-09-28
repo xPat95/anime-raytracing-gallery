@@ -8,6 +8,9 @@ use crate::{
 };
 
 const BACKGROUND: Color = Color::new(18, 22, 30, 255);
+const MAX_RAY_DEPTH: u32 = 8;
+const MAX_SHADOW_HITS: u32 = 16;
+const TRANSMISSION_BIAS: f32 = 0.001;
 
 #[derive(Clone, Copy, Debug)]
 pub enum RenderStrategy {
@@ -32,9 +35,10 @@ impl Accelerator<'_> {
 
     fn is_occluded(self, ray_origin: &Vec3, ray_direction: &Vec3, max_distance: f32) -> bool {
         match self {
-            Self::Linear(cubes) => {
-                is_shadowed_linear(ray_origin, ray_direction, max_distance, cubes)
-            }
+            Self::Linear(cubes) => cubes.iter().any(|cube| {
+                let hit = cube.ray_intersect(ray_origin, ray_direction);
+                hit.is_intersecting && hit.distance < max_distance
+            }),
             Self::Bvh(bvh, cubes) => {
                 bvh.is_occluded(ray_origin, ray_direction, max_distance, cubes)
             }
@@ -153,20 +157,15 @@ fn render_rows(
         for x in 0..width {
             let ray_origin = camera.position();
             let ray_direction = camera.ray_direction(x, y, width, height);
-            let closest_hit = accelerator.closest_hit(&ray_origin, &ray_direction);
-            let color = if closest_hit.is_intersecting {
-                shade_hit(
-                    closest_hit,
-                    &ray_origin,
-                    &ray_direction,
-                    accelerator,
-                    textures,
-                    lighting,
-                )
-            } else {
-                BACKGROUND
-            };
-            pixels.push(color);
+            let color = trace_ray(
+                &ray_origin,
+                &ray_direction,
+                accelerator,
+                textures,
+                lighting,
+                0,
+            );
+            pixels.push(vec3_to_color(color));
         }
     }
     pixels
@@ -186,14 +185,57 @@ fn cast_ray_linear(ray_origin: &Vec3, ray_direction: &Vec3, cubes: &[Cube]) -> I
     closest_hit
 }
 
-fn shade_hit(
+fn trace_ray(
+    ray_origin: &Vec3,
+    ray_direction: &Vec3,
+    accelerator: Accelerator<'_>,
+    textures: &[Texture],
+    lighting: &LightingConfig,
+    depth: u32,
+) -> Vec3 {
+    let hit = accelerator.closest_hit(ray_origin, ray_direction);
+    if !hit.is_intersecting {
+        return color_to_vec3(BACKGROUND);
+    }
+
+    let (surface, tint) = shade_surface(
+        hit,
+        ray_origin,
+        ray_direction,
+        accelerator,
+        textures,
+        lighting,
+    );
+    let transparency = hit.material.transparency.clamp(0.0, 1.0);
+    if !can_transmit(transparency, depth) {
+        return surface;
+    }
+
+    let hit_point = *ray_origin + *ray_direction * hit.distance;
+    let transmitted_origin = transmitted_ray_origin(hit_point, *ray_direction);
+    let transmitted = trace_ray(
+        &transmitted_origin,
+        ray_direction,
+        accelerator,
+        textures,
+        lighting,
+        depth + 1,
+    );
+    blend_transparency(surface, transmitted, tint, transparency)
+}
+
+fn can_transmit(transparency: f32, depth: u32) -> bool {
+    transparency > 0.0 && depth < MAX_RAY_DEPTH
+}
+
+fn shade_surface(
     hit: Intersect,
     ray_origin: &Vec3,
     ray_direction: &Vec3,
     accelerator: Accelerator<'_>,
     textures: &[Texture],
     lighting: &LightingConfig,
-) -> Color {
+) -> (Vec3, Vec3) {
     let surface_color = hit
         .material
         .texture_index
@@ -208,15 +250,19 @@ fn shade_hit(
     let light_direction = to_light / light_distance;
     let diffuse_angle = lambert(normal, light_direction);
     let shadow_origin = hit_point + normal * lighting.shadow_bias;
-    let shadowed = diffuse_angle > 0.0
-        && accelerator.is_occluded(&shadow_origin, &light_direction, light_distance);
-
-    let diffuse = if shadowed {
-        0.0
+    let light_visibility = if diffuse_angle > 0.0 {
+        shadow_visibility(
+            &shadow_origin,
+            &light_direction,
+            light_distance,
+            accelerator,
+        )
     } else {
-        diffuse_angle * hit.material.albedo * lighting.light.intensity
+        1.0
     };
-    let specular = if shadowed || diffuse_angle == 0.0 {
+
+    let diffuse = diffuse_angle * hit.material.albedo * lighting.light.intensity * light_visibility;
+    let specular = if diffuse_angle == 0.0 {
         0.0
     } else {
         phong_specular(
@@ -226,7 +272,7 @@ fn shade_hit(
             hit.material.specular,
             lighting.light.intensity,
             lighting.phong_shininess,
-        )
+        ) * light_visibility
     };
     let light_color = color_to_vec3(lighting.light.color);
     let base_color = color_to_vec3(surface_color);
@@ -239,12 +285,54 @@ fn shade_hit(
             + specular * light_color.z,
     );
 
-    Color::new(
-        (lit_color.x.clamp(0.0, 1.0) * 255.0) as u8,
-        (lit_color.y.clamp(0.0, 1.0) * 255.0) as u8,
-        (lit_color.z.clamp(0.0, 1.0) * 255.0) as u8,
-        surface_color.a,
+    (lit_color, transmission_tint(base_color))
+}
+
+fn blend_transparency(surface: Vec3, transmitted: Vec3, tint: Vec3, transparency: f32) -> Vec3 {
+    surface * (1.0 - transparency) + component_multiply(transmitted, tint) * transparency
+}
+
+fn transmission_tint(surface_color: Vec3) -> Vec3 {
+    Vec3::new(
+        0.6 + surface_color.x * 0.4,
+        0.6 + surface_color.y * 0.4,
+        0.6 + surface_color.z * 0.4,
     )
+}
+
+fn transmitted_ray_origin(hit_point: Vec3, ray_direction: Vec3) -> Vec3 {
+    hit_point + ray_direction * TRANSMISSION_BIAS
+}
+
+fn shadow_visibility(
+    shadow_origin: &Vec3,
+    light_direction: &Vec3,
+    light_distance: f32,
+    accelerator: Accelerator<'_>,
+) -> f32 {
+    let mut visibility = 1.0;
+    let mut origin = *shadow_origin;
+    let mut remaining_distance = light_distance;
+
+    for _ in 0..MAX_SHADOW_HITS {
+        let hit = accelerator.closest_hit(&origin, light_direction);
+        if !hit.is_intersecting || hit.distance >= remaining_distance {
+            break;
+        }
+        visibility *= hit.material.transparency.clamp(0.0, 1.0);
+        if visibility <= f32::EPSILON {
+            debug_assert!(accelerator.is_occluded(&origin, light_direction, remaining_distance));
+            return 0.0;
+        }
+        let advance = hit.distance + TRANSMISSION_BIAS;
+        origin = origin + *light_direction * advance;
+        remaining_distance -= advance;
+        if remaining_distance <= 0.0 {
+            break;
+        }
+    }
+
+    visibility
 }
 
 fn lambert(normal: Vec3, light_direction: Vec3) -> f32 {
@@ -273,24 +361,25 @@ fn phong_specular(
         * light_intensity
 }
 
-fn is_shadowed_linear(
-    shadow_origin: &Vec3,
-    light_direction: &Vec3,
-    light_distance: f32,
-    cubes: &[Cube],
-) -> bool {
-    cubes.iter().any(|cube| {
-        let hit = cube.ray_intersect(shadow_origin, light_direction);
-        hit.is_intersecting && hit.distance < light_distance
-    })
-}
-
 fn color_to_vec3(color: Color) -> Vec3 {
     Vec3::new(
         color.r as f32 / 255.0,
         color.g as f32 / 255.0,
         color.b as f32 / 255.0,
     )
+}
+
+fn vec3_to_color(color: Vec3) -> Color {
+    Color::new(
+        (color.x.clamp(0.0, 1.0) * 255.0) as u8,
+        (color.y.clamp(0.0, 1.0) * 255.0) as u8,
+        (color.z.clamp(0.0, 1.0) * 255.0) as u8,
+        255,
+    )
+}
+
+fn component_multiply(left: Vec3, right: Vec3) -> Vec3 {
+    Vec3::new(left.x * right.x, left.y * right.y, left.z * right.z)
 }
 
 #[cfg(test)]
@@ -334,13 +423,24 @@ mod tests {
             material,
         )];
 
-        assert!(is_shadowed_linear(&origin, &direction, 10.0, &before_light));
-        assert!(!is_shadowed_linear(
-            &origin,
-            &direction,
-            10.0,
-            &behind_light
-        ));
+        assert_eq!(
+            shadow_visibility(
+                &origin,
+                &direction,
+                10.0,
+                Accelerator::Linear(&before_light)
+            ),
+            0.0
+        );
+        assert_eq!(
+            shadow_visibility(
+                &origin,
+                &direction,
+                10.0,
+                Accelerator::Linear(&behind_light)
+            ),
+            1.0
+        );
     }
 
     #[test]
@@ -350,7 +450,77 @@ mod tests {
         let surface_point = Vec3::new(0.0, 0.0, 0.5);
         let biased_origin = surface_point + normal * 0.001;
 
-        assert!(!is_shadowed_linear(&biased_origin, &normal, 10.0, &[cube]));
+        assert_eq!(
+            shadow_visibility(&biased_origin, &normal, 10.0, Accelerator::Linear(&[cube])),
+            1.0
+        );
+    }
+
+    #[test]
+    fn transparency_blends_surface_and_tinted_transmission() {
+        let surface = Vec3::new(1.0, 0.0, 0.0);
+        let transmitted = Vec3::new(0.0, 0.0, 1.0);
+        let neutral_tint = Vec3::new(1.0, 1.0, 1.0);
+
+        assert_eq!(
+            blend_transparency(surface, transmitted, neutral_tint, 0.0),
+            surface
+        );
+        assert_eq!(
+            blend_transparency(surface, transmitted, neutral_tint, 1.0),
+            transmitted
+        );
+        assert_eq!(
+            blend_transparency(surface, transmitted, neutral_tint, 0.5),
+            Vec3::new(0.5, 0.0, 0.5)
+        );
+    }
+
+    #[test]
+    fn transmitted_ray_keeps_direction_and_starts_after_surface() {
+        let hit_point = Vec3::new(1.0, 2.0, 3.0);
+        let direction = Vec3::new(0.0, 0.0, 1.0);
+        let origin = transmitted_ray_origin(hit_point, direction);
+
+        assert!((origin.z - 3.001).abs() < 0.00001);
+        assert_eq!((origin - hit_point).normalize(), direction);
+    }
+
+    #[test]
+    fn transparent_shadow_attenuates_while_opaque_shadow_blocks() {
+        let mut transparent_material = Material::new(Color::WHITE);
+        transparent_material.transparency = 0.5;
+        let transparent_cube = [Cube::from_center_size(
+            Vec3::new(0.0, 0.0, 5.0),
+            1.0,
+            transparent_material,
+        )];
+        let opaque_cube = [Cube::from_center_size(
+            Vec3::new(0.0, 0.0, 5.0),
+            1.0,
+            Material::new(Color::WHITE),
+        )];
+        let origin = Vec3::default();
+        let direction = Vec3::new(0.0, 0.0, 1.0);
+
+        let transparent_visibility = shadow_visibility(
+            &origin,
+            &direction,
+            10.0,
+            Accelerator::Linear(&transparent_cube),
+        );
+        assert!(transparent_visibility > 0.0 && transparent_visibility < 1.0);
+        assert_eq!(
+            shadow_visibility(&origin, &direction, 10.0, Accelerator::Linear(&opaque_cube)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn maximum_depth_stops_transmission() {
+        assert!(can_transmit(0.5, MAX_RAY_DEPTH - 1));
+        assert!(!can_transmit(0.5, MAX_RAY_DEPTH));
+        assert!(!can_transmit(0.0, 0));
     }
 
     #[test]
