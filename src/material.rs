@@ -10,6 +10,7 @@ pub struct Material {
     pub specular: f32,
     pub transparency: f32,
     pub reflectivity: f32,
+    pub ior: Option<f32>,
 }
 
 impl Material {
@@ -21,6 +22,7 @@ impl Material {
             specular: 0.0,
             transparency: 0.0,
             reflectivity: 0.0,
+            ior: None,
         }
     }
 
@@ -30,6 +32,7 @@ impl Material {
         specular: f32,
         transparency: f32,
         reflectivity: f32,
+        ior: Option<f32>,
     ) -> Self {
         let material = Self {
             base_color: Color::WHITE,
@@ -38,6 +41,7 @@ impl Material {
             specular,
             transparency,
             reflectivity,
+            ior,
         };
         material.validate();
         material
@@ -57,6 +61,12 @@ impl Material {
             assert!(
                 (0.0..=1.0).contains(&value),
                 "material {name} must be between 0.0 and 1.0"
+            );
+        }
+        if let Some(ior) = self.ior {
+            assert!(
+                ior.is_finite() && ior > 0.0,
+                "material IOR must be positive"
             );
         }
     }

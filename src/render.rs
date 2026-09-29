@@ -212,10 +212,12 @@ fn trace_ray(
     }
 
     let hit_point = *ray_origin + *ray_direction * hit.distance;
-    let transmitted_origin = transmitted_ray_origin(hit_point, *ray_direction);
+    let transmitted_direction =
+        transmission_direction(*ray_direction, hit.normal.normalize(), hit.material.ior);
+    let transmitted_origin = transmitted_ray_origin(hit_point, transmitted_direction);
     let transmitted = trace_ray(
         &transmitted_origin,
-        ray_direction,
+        &transmitted_direction,
         accelerator,
         textures,
         lighting,
@@ -302,6 +304,37 @@ fn transmission_tint(surface_color: Vec3) -> Vec3 {
 
 fn transmitted_ray_origin(hit_point: Vec3, ray_direction: Vec3) -> Vec3 {
     hit_point + ray_direction * TRANSMISSION_BIAS
+}
+
+fn transmission_direction(incident: Vec3, outward_normal: Vec3, ior: Option<f32>) -> Vec3 {
+    let incident = incident.normalize();
+    let Some(material_ior) = ior else {
+        return incident;
+    };
+    let entering = incident.dot(outward_normal) < 0.0;
+    let (normal, eta_ratio) = if entering {
+        (outward_normal, 1.0 / material_ior)
+    } else {
+        (-outward_normal, material_ior)
+    };
+
+    refract(incident, normal, eta_ratio)
+        .unwrap_or_else(|| reflect(incident, normal))
+        .normalize()
+}
+
+fn refract(incident: Vec3, oriented_normal: Vec3, eta_ratio: f32) -> Option<Vec3> {
+    let cos_theta = (-incident).dot(oriented_normal).min(1.0);
+    let perpendicular = (incident + oriented_normal * cos_theta) * eta_ratio;
+    let parallel_length_squared = 1.0 - perpendicular.dot(perpendicular);
+    if parallel_length_squared < 0.0 {
+        return None;
+    }
+    Some(perpendicular - oriented_normal * parallel_length_squared.sqrt())
+}
+
+fn reflect(incident: Vec3, normal: Vec3) -> Vec3 {
+    incident - normal * (2.0 * incident.dot(normal))
 }
 
 fn shadow_visibility(
@@ -521,6 +554,54 @@ mod tests {
         assert!(can_transmit(0.5, MAX_RAY_DEPTH - 1));
         assert!(!can_transmit(0.5, MAX_RAY_DEPTH));
         assert!(!can_transmit(0.0, 0));
+    }
+
+    #[test]
+    fn perpendicular_air_to_glass_keeps_direction() {
+        let incident = Vec3::new(0.0, 0.0, -1.0);
+        let direction = transmission_direction(incident, Vec3::new(0.0, 0.0, 1.0), Some(1.5));
+
+        assert!((direction - incident).length() < 0.0001);
+        assert!((direction.length() - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn air_to_glass_bends_toward_normal() {
+        let incident = Vec3::new(1.0, 0.0, -1.0).normalize();
+        let direction = transmission_direction(incident, Vec3::new(0.0, 0.0, 1.0), Some(1.5));
+
+        assert!(direction.x.abs() < incident.x.abs());
+        assert!(direction.z.abs() > incident.z.abs());
+    }
+
+    #[test]
+    fn glass_to_air_bends_away_from_normal() {
+        let incident = Vec3::new(0.3, 0.0, 0.9539392).normalize();
+        let direction = transmission_direction(incident, Vec3::new(0.0, 0.0, 1.0), Some(1.5));
+
+        assert!(direction.x.abs() > incident.x.abs());
+        assert!(direction.z.abs() < incident.z.abs());
+    }
+
+    #[test]
+    fn total_internal_reflection_is_detected_and_reflected() {
+        let incident = Vec3::new(0.9, 0.0, 0.4358899).normalize();
+        let oriented_normal = Vec3::new(0.0, 0.0, -1.0);
+
+        assert!(refract(incident, oriented_normal, 1.5).is_none());
+        let direction = transmission_direction(incident, -oriented_normal, Some(1.5));
+        assert!(direction.z < 0.0);
+        assert!((direction.length() - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn transparent_material_without_ior_transmits_straight() {
+        let incident = Vec3::new(0.4, 0.0, -1.0).normalize();
+
+        assert_eq!(
+            transmission_direction(incident, Vec3::new(0.0, 0.0, 1.0), None),
+            incident
+        );
     }
 
     #[test]

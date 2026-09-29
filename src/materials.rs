@@ -28,6 +28,7 @@ pub struct MaterialConfig {
     pub specular: f32,
     pub transparency: f32,
     pub reflectivity: f32,
+    pub ior: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -75,6 +76,7 @@ impl MaterialCatalog {
                     config.specular,
                     config.transparency,
                     config.reflectivity,
+                    config.ior,
                 ),
                 geometry: config.geometry,
             };
@@ -117,6 +119,7 @@ mod tests {
                 specular: 0.0,
                 transparency: 0.0,
                 reflectivity: 0.0,
+                ior: None,
             }],
         );
 

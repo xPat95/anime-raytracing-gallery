@@ -75,7 +75,7 @@ fn black_clover_skull() -> SceneConfig {
             BlockGeometry::Portal,
             0.85,
             0.60,
-            0.35,
+            0.45,
             0.15,
         ),
         material(
@@ -163,7 +163,7 @@ fn shenlong() -> SceneConfig {
             0.00,
             0.03,
         ),
-        material(
+        refractive_material(
             "minecraft:orange_stained_glass",
             "orange_stained_glass",
             BlockGeometry::Cube,
@@ -171,6 +171,7 @@ fn shenlong() -> SceneConfig {
             0.45,
             0.35,
             0.12,
+            1.5,
         ),
         glowstone_material(),
         material(
@@ -454,7 +455,7 @@ fn glowstone_material() -> MaterialConfig {
 }
 
 fn red_stained_glass_material() -> MaterialConfig {
-    material(
+    refractive_material(
         "minecraft:red_stained_glass",
         "red_stained_glass",
         BlockGeometry::Cube,
@@ -462,6 +463,7 @@ fn red_stained_glass_material() -> MaterialConfig {
         0.45,
         0.35,
         0.12,
+        1.5,
     )
 }
 
@@ -491,6 +493,32 @@ fn material(
         specular,
         transparency,
         reflectivity,
+        ior: None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn refractive_material(
+    block_name: &'static str,
+    texture_id: &'static str,
+    geometry: BlockGeometry,
+    albedo: f32,
+    specular: f32,
+    transparency: f32,
+    reflectivity: f32,
+    ior: f32,
+) -> MaterialConfig {
+    MaterialConfig {
+        ior: Some(ior),
+        ..material(
+            block_name,
+            texture_id,
+            geometry,
+            albedo,
+            specular,
+            transparency,
+            reflectivity,
+        )
     }
 }
 
@@ -536,6 +564,13 @@ mod tests {
             Vec3::new(-90.0, 125.0, 140.0)
         );
         assert_eq!(scene.lighting.ambient_intensity, 0.10);
+        let portal = scene
+            .materials
+            .iter()
+            .find(|material| material.block_name == "minecraft:nether_portal")
+            .unwrap();
+        assert_eq!(portal.transparency, 0.45);
+        assert_eq!(portal.ior, None);
     }
 
     #[test]
@@ -610,8 +645,16 @@ mod tests {
             .find(|material| material.block_name == "minecraft:glowstone")
             .unwrap();
         assert_eq!(orange_glass.transparency, 0.35);
+        assert_eq!(orange_glass.ior, Some(1.5));
         assert_eq!(orange_glass.geometry, BlockGeometry::Cube);
         assert_eq!(glowstone.albedo, 0.95);
+        let red_glass = config
+            .materials
+            .iter()
+            .find(|material| material.block_name == "minecraft:red_stained_glass")
+            .unwrap();
+        assert_eq!(red_glass.transparency, 0.35);
+        assert_eq!(red_glass.ior, Some(1.5));
     }
 
     #[test]
