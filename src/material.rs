@@ -11,6 +11,8 @@ pub struct Material {
     pub transparency: f32,
     pub reflectivity: f32,
     pub ior: Option<f32>,
+    pub emission_tint: Color,
+    pub emission_strength: f32,
 }
 
 impl Material {
@@ -23,6 +25,8 @@ impl Material {
             transparency: 0.0,
             reflectivity: 0.0,
             ior: None,
+            emission_tint: Color::WHITE,
+            emission_strength: 0.0,
         }
     }
 
@@ -42,6 +46,8 @@ impl Material {
             transparency,
             reflectivity,
             ior,
+            emission_tint: Color::WHITE,
+            emission_strength: 0.0,
         };
         material.validate();
         material
@@ -69,6 +75,10 @@ impl Material {
                 "material IOR must be positive"
             );
         }
+        assert!(
+            self.emission_strength.is_finite() && self.emission_strength >= 0.0,
+            "material emission strength must be finite and non-negative"
+        );
     }
 }
 
@@ -86,5 +96,27 @@ mod tests {
 
         material.transparency = 0.01;
         assert!(!material.is_opaque());
+    }
+
+    #[test]
+    fn emission_does_not_change_optical_properties() {
+        let mut material = Material::new(Color::WHITE);
+        material.transparency = 0.35;
+        material.reflectivity = 0.12;
+        material.ior = Some(1.5);
+        material.emission_tint = Color::GOLD;
+        material.emission_strength = 0.5;
+
+        assert!(!material.is_opaque());
+        assert_eq!(material.transparency, 0.35);
+        assert_eq!(material.reflectivity, 0.12);
+        assert_eq!(material.ior, Some(1.5));
+    }
+
+    #[test]
+    fn opaque_emissive_material_remains_opaque() {
+        let mut material = Material::new(Color::WHITE);
+        material.emission_strength = 0.8;
+        assert!(material.is_opaque());
     }
 }

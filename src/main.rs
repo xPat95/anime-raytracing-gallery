@@ -101,6 +101,8 @@ struct ActiveScene {
     rendered_resolution: RenderResolution,
     quality_level: QualityLevel,
     last_interaction: Instant,
+    animation_started: Instant,
+    rendered_animation_frames: Vec<usize>,
 }
 
 impl ActiveScene {
@@ -115,6 +117,7 @@ impl ActiveScene {
         let lighting = config.lighting;
         let sky = config.sky;
         let (materials, textures) = MaterialCatalog::load(&config.textures, &config.materials)?;
+        let rendered_animation_frames = animation_frames(&textures, 0.0);
         let ground = GroundPlane::from_config(config.ground)?;
         let resolution = target_resolution(
             raylib.get_screen_width(),
@@ -143,6 +146,8 @@ impl ActiveScene {
             rendered_resolution: resolution,
             quality_level: QualityLevel::Final,
             last_interaction: Instant::now(),
+            animation_started: Instant::now(),
+            rendered_animation_frames,
         })
     }
 
@@ -189,9 +194,13 @@ impl ActiveScene {
             raylib.get_screen_height(),
             desired_level,
         );
+        let render_time_seconds = now.duration_since(self.animation_started).as_secs_f32();
+        let current_animation_frames = animation_frames(&self.textures, render_time_seconds);
+        let animation_changed = current_animation_frames != self.rendered_animation_frames;
         let needs_render = camera_changed
             || desired_level != self.quality_level
-            || desired_resolution != self.rendered_resolution;
+            || desired_resolution != self.rendered_resolution
+            || animation_changed;
         if needs_render {
             print_camera_state(&self.camera);
             let label = match desired_level {
@@ -206,6 +215,7 @@ impl ActiveScene {
                 &self.lighting,
                 self.sky,
                 &self.ground,
+                render_time_seconds,
                 RenderStrategy::BvhMultiThread,
                 label,
                 desired_resolution,
@@ -219,9 +229,17 @@ impl ActiveScene {
             self.display_texture = texture;
             self.rendered_resolution = desired_resolution;
             self.quality_level = desired_level;
+            self.rendered_animation_frames = current_animation_frames;
         }
         Ok(())
     }
+}
+
+fn animation_frames(textures: &[Texture], elapsed_seconds: f32) -> Vec<usize> {
+    textures
+        .iter()
+        .map(|texture| texture.frame_index(elapsed_seconds))
+        .collect()
 }
 
 fn main() -> Result<(), String> {
@@ -365,6 +383,7 @@ fn load_and_render_scene(
             lighting,
             config.sky,
             ground,
+            0.0,
             RenderStrategy::BvhMultiThread,
             "full scene",
             resolution,
@@ -377,6 +396,7 @@ fn load_and_render_scene(
             lighting,
             config.sky,
             ground,
+            0.0,
             RenderStrategy::BvhMultiThread,
             "optimized scene",
             resolution,
@@ -399,6 +419,7 @@ fn load_and_render_scene(
             lighting,
             config.sky,
             ground,
+            0.0,
             RenderStrategy::LinearSingleThread,
             "linear single-thread",
             resolution,
@@ -411,6 +432,7 @@ fn load_and_render_scene(
             lighting,
             config.sky,
             ground,
+            0.0,
             RenderStrategy::BvhSingleThread,
             "BVH single-thread",
             resolution,
@@ -424,6 +446,7 @@ fn load_and_render_scene(
             lighting,
             config.sky,
             ground,
+            0.0,
             RenderStrategy::BvhMultiThread,
             "BVH multi-thread",
             resolution,
@@ -447,6 +470,7 @@ fn load_and_render_scene(
         lighting,
         config.sky,
         ground,
+        0.0,
         RenderStrategy::BvhMultiThread,
         label,
         resolution,
@@ -572,6 +596,7 @@ fn render_scene_at(
     lighting: &LightingConfig,
     sky: SkyType,
     ground: &GroundPlane,
+    render_time_seconds: f32,
     strategy: RenderStrategy,
     label: &str,
     resolution: RenderResolution,
@@ -593,6 +618,7 @@ fn render_scene_at(
         lighting,
         sky,
         ground,
+        render_time_seconds,
         strategy,
     );
     let elapsed = started.elapsed();

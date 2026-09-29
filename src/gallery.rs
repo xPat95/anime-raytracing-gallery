@@ -42,6 +42,7 @@ fn black_clover_skull() -> SceneConfig {
             id: "nether_portal",
             path: "assets/textures/nether_portal.png",
             first_frame_height: Some(16),
+            animation_fps: 10.0,
         },
         texture("blackstone", "assets/textures/blackstone.png"),
     ];
@@ -74,14 +75,18 @@ fn black_clover_skull() -> SceneConfig {
             0.00,
             0.08,
         ),
-        material(
-            "minecraft:nether_portal",
-            "nether_portal",
-            BlockGeometry::Portal,
-            0.85,
-            0.60,
-            0.45,
-            0.15,
+        emissive(
+            material(
+                "minecraft:nether_portal",
+                "nether_portal",
+                BlockGeometry::Portal,
+                0.85,
+                0.60,
+                0.45,
+                0.15,
+            ),
+            Color::new(210, 130, 255, 255),
+            0.55,
         ),
         material(
             "minecraft:blackstone_slab",
@@ -331,14 +336,18 @@ fn lapras() -> SceneConfig {
             0.00,
             0.01,
         ),
-        material(
-            "minecraft:ochre_froglight",
-            "ochre_froglight",
-            BlockGeometry::OpaqueCube,
-            0.92,
-            0.22,
-            0.00,
-            0.07,
+        emissive(
+            material(
+                "minecraft:ochre_froglight",
+                "ochre_froglight",
+                BlockGeometry::OpaqueCube,
+                0.92,
+                0.22,
+                0.00,
+                0.07,
+            ),
+            Color::new(255, 225, 165, 255),
+            0.45,
         ),
         material(
             "minecraft:diorite",
@@ -472,14 +481,18 @@ fn red_wool_material() -> MaterialConfig {
 }
 
 fn glowstone_material() -> MaterialConfig {
-    material(
-        "minecraft:glowstone",
-        "glowstone",
-        BlockGeometry::OpaqueCube,
-        0.95,
-        0.25,
-        0.00,
-        0.08,
+    emissive(
+        material(
+            "minecraft:glowstone",
+            "glowstone",
+            BlockGeometry::OpaqueCube,
+            0.95,
+            0.25,
+            0.00,
+            0.08,
+        ),
+        Color::new(255, 220, 150, 255),
+        0.50,
     )
 }
 
@@ -501,6 +514,7 @@ fn texture(id: &'static str, path: &'static str) -> TextureConfig {
         id,
         path,
         first_frame_height: None,
+        animation_fps: 0.0,
     }
 }
 
@@ -523,6 +537,12 @@ fn solid_ground(
     }
 }
 
+fn emissive(mut material: MaterialConfig, tint: Color, strength: f32) -> MaterialConfig {
+    material.emission_tint = tint;
+    material.emission_strength = strength;
+    material
+}
+
 #[allow(clippy::too_many_arguments)]
 fn material(
     block_name: &'static str,
@@ -542,6 +562,8 @@ fn material(
         transparency,
         reflectivity,
         ior: None,
+        emission_tint: Color::WHITE,
+        emission_strength: 0.0,
     }
 }
 
@@ -627,6 +649,28 @@ mod tests {
         assert!(scenes[4].ground.transparency > 0.0);
         assert!(scenes[4].ground.reflectivity > 0.0);
         assert_eq!(scenes[4].ground.ior, Some(1.33));
+
+        let portal = scenes[0]
+            .materials
+            .iter()
+            .find(|material| material.block_name == "minecraft:nether_portal")
+            .unwrap();
+        assert!(portal.transparency > 0.0);
+        assert_eq!(portal.ior, None);
+        assert!(portal.emission_strength > 0.0);
+        let portal_texture = scenes[0]
+            .textures
+            .iter()
+            .find(|texture| texture.id == "nether_portal")
+            .unwrap();
+        assert_eq!(portal_texture.first_frame_height, Some(16));
+        assert_eq!(portal_texture.animation_fps, 10.0);
+        assert!(scenes[1..].iter().all(|scene| {
+            scene
+                .textures
+                .iter()
+                .all(|texture| texture.animation_fps == 0.0)
+        }));
     }
 
     #[test]

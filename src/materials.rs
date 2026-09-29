@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use raylib::prelude::Color;
+
 use crate::{material::Material, texture::Texture};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +19,7 @@ pub struct TextureConfig {
     pub id: &'static str,
     pub path: &'static str,
     pub first_frame_height: Option<u32>,
+    pub animation_fps: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -29,6 +32,8 @@ pub struct MaterialConfig {
     pub transparency: f32,
     pub reflectivity: f32,
     pub ior: Option<f32>,
+    pub emission_tint: Color,
+    pub emission_strength: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -54,7 +59,7 @@ impl MaterialCatalog {
                 return Err(format!("duplicate texture id '{}'", config.id));
             }
             let texture = match config.first_frame_height {
-                Some(height) => Texture::load_first_frame(config.path, height)?,
+                Some(height) => Texture::load_animated(config.path, height, config.animation_fps)?,
                 None => Texture::load(config.path)?,
             };
             texture_indices.insert(config.id, textures.len());
@@ -69,15 +74,18 @@ impl MaterialCatalog {
                     config.block_name, config.texture_id
                 )
             })?;
+            let mut material = Material::textured(
+                texture_index,
+                config.albedo,
+                config.specular,
+                config.transparency,
+                config.reflectivity,
+                config.ior,
+            );
+            material.emission_tint = config.emission_tint;
+            material.emission_strength = config.emission_strength;
             let definition = BlockDefinition {
-                material: Material::textured(
-                    texture_index,
-                    config.albedo,
-                    config.specular,
-                    config.transparency,
-                    config.reflectivity,
-                    config.ior,
-                ),
+                material,
                 geometry: config.geometry,
             };
             if definitions.insert(config.block_name, definition).is_some() {
@@ -120,6 +128,8 @@ mod tests {
                 transparency: 0.0,
                 reflectivity: 0.0,
                 ior: None,
+                emission_tint: Color::WHITE,
+                emission_strength: 0.0,
             }],
         );
 

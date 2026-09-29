@@ -34,6 +34,12 @@ struct SceneHit {
     is_ground: bool,
 }
 
+#[derive(Clone, Copy)]
+struct TextureSnapshot<'a> {
+    textures: &'a [Texture],
+    frames: &'a [usize],
+}
+
 impl Accelerator<'_> {
     fn closest_hit(self, ray_origin: &Vec3, ray_direction: &Vec3) -> Intersect {
         match self {
@@ -85,8 +91,17 @@ pub fn render(
     lighting: &LightingConfig,
     sky: SkyType,
     ground: &GroundPlane,
+    render_time_seconds: f32,
     strategy: RenderStrategy,
 ) -> usize {
+    let texture_frames: Vec<usize> = textures
+        .iter()
+        .map(|texture| texture.frame_index(render_time_seconds))
+        .collect();
+    let texture_snapshot = TextureSnapshot {
+        textures,
+        frames: &texture_frames,
+    };
     let accelerator = match strategy {
         RenderStrategy::LinearSingleThread => Accelerator::Linear(cubes),
         RenderStrategy::BvhSingleThread | RenderStrategy::BvhMultiThread => {
@@ -108,7 +123,7 @@ pub fn render(
             framebuffer.height(),
             camera,
             accelerator,
-            textures,
+            texture_snapshot,
             lighting,
             sky,
             ground,
@@ -120,7 +135,7 @@ pub fn render(
             worker_count,
             camera,
             accelerator,
-            textures,
+            texture_snapshot,
             lighting,
             sky,
             ground,
@@ -138,7 +153,7 @@ fn render_parallel(
     worker_count: usize,
     camera: &Camera,
     accelerator: Accelerator<'_>,
-    textures: &[Texture],
+    texture_snapshot: TextureSnapshot<'_>,
     lighting: &LightingConfig,
     sky: SkyType,
     ground: &GroundPlane,
@@ -162,7 +177,7 @@ fn render_parallel(
                         height,
                         camera,
                         accelerator,
-                        textures,
+                        texture_snapshot,
                         lighting,
                         sky,
                         ground,
@@ -189,7 +204,7 @@ fn render_rows(
     height: u32,
     camera: &Camera,
     accelerator: Accelerator<'_>,
-    textures: &[Texture],
+    texture_snapshot: TextureSnapshot<'_>,
     lighting: &LightingConfig,
     sky: SkyType,
     ground: &GroundPlane,
@@ -203,7 +218,7 @@ fn render_rows(
                 &ray_origin,
                 &ray_direction,
                 accelerator,
-                textures,
+                texture_snapshot,
                 lighting,
                 sky,
                 ground,
@@ -234,7 +249,7 @@ fn trace_ray(
     ray_origin: &Vec3,
     ray_direction: &Vec3,
     accelerator: Accelerator<'_>,
-    textures: &[Texture],
+    texture_snapshot: TextureSnapshot<'_>,
     lighting: &LightingConfig,
     sky: SkyType,
     ground: &GroundPlane,
@@ -263,7 +278,7 @@ fn trace_ray(
         geometric_normal,
         scene_hit.is_ground,
         accelerator,
-        textures,
+        texture_snapshot,
         lighting,
         ground,
     );
@@ -285,7 +300,7 @@ fn trace_ray(
             &transmitted_origin,
             &transmitted_direction,
             accelerator,
-            textures,
+            texture_snapshot,
             lighting,
             sky,
             ground,
@@ -312,7 +327,7 @@ fn trace_ray(
         &reflected_origin,
         &reflected_direction,
         accelerator,
-        textures,
+        texture_snapshot,
         lighting,
         sky,
         ground,
@@ -342,7 +357,7 @@ fn shade_surface(
     geometric_normal: Vec3,
     is_ground: bool,
     accelerator: Accelerator<'_>,
-    textures: &[Texture],
+    texture_snapshot: TextureSnapshot<'_>,
     lighting: &LightingConfig,
     ground: &GroundPlane,
 ) -> (Vec3, Vec3) {
@@ -350,9 +365,17 @@ fn shade_surface(
     let mut base_color = hit
         .material
         .texture_index
-        .and_then(|index| textures.get(index))
-        .map_or(material_tint, |texture| {
-            component_multiply(color_to_vec3(texture.sample(hit.u, hit.v)), material_tint)
+        .and_then(|index| {
+            texture_snapshot
+                .textures
+                .get(index)
+                .map(|texture| (index, texture))
+        })
+        .map_or(material_tint, |(index, texture)| {
+            component_multiply(
+                color_to_vec3(texture.sample_frame(hit.u, hit.v, texture_snapshot.frames[index])),
+                material_tint,
+            )
         });
     if is_ground {
         base_color = base_color * ground.color_variation(hit_point);
@@ -396,8 +419,14 @@ fn shade_surface(
         base_color.z * (lighting.ambient_intensity + diffuse * light_color.z)
             + specular * light_color.z,
     );
+    let emission = emission_contribution(base_color, hit.material);
 
-    (lit_color, transmission_tint(base_color))
+    (lit_color + emission, transmission_tint(base_color))
+}
+
+fn emission_contribution(base_color: Vec3, material: crate::material::Material) -> Vec3 {
+    component_multiply(base_color, color_to_vec3(material.emission_tint))
+        * material.emission_strength
 }
 
 fn blend_transparency(surface: Vec3, transmitted: Vec3, tint: Vec3, transparency: f32) -> Vec3 {
@@ -577,6 +606,32 @@ mod tests {
         assert_eq!(
             phong_specular(direction, direction, direction, 0.0, 1.0, 32.0),
             0.0
+        );
+    }
+
+    #[test]
+    fn zero_emission_adds_nothing() {
+        let material = Material::new(Color::WHITE);
+        assert_eq!(
+            emission_contribution(Vec3::new(0.4, 0.2, 0.8), material),
+            Vec3::default()
+        );
+    }
+
+    #[test]
+    fn emission_preserves_surface_modulation_without_lighting() {
+        let mut material = Material::new(Color::WHITE);
+        material.emission_tint = Color::new(128, 255, 64, 255);
+        material.emission_strength = 0.5;
+        let dark_texel = emission_contribution(Vec3::new(0.2, 0.1, 0.4), material);
+        let bright_texel = emission_contribution(Vec3::new(0.8, 0.4, 0.9), material);
+
+        assert!(bright_texel.x > dark_texel.x);
+        assert!(bright_texel.y > dark_texel.y);
+        assert!(bright_texel.z > dark_texel.z);
+        assert_eq!(
+            dark_texel,
+            emission_contribution(Vec3::new(0.2, 0.1, 0.4), material)
         );
     }
 
@@ -876,6 +931,7 @@ mod tests {
             &lighting,
             SkyType::ClearDay,
             &ground,
+            0.0,
             RenderStrategy::BvhSingleThread,
         );
         render(
@@ -887,6 +943,7 @@ mod tests {
             &lighting,
             SkyType::ClearDay,
             &ground,
+            0.0,
             RenderStrategy::BvhMultiThread,
         );
 
