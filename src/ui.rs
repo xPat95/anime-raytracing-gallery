@@ -118,6 +118,17 @@ pub struct GalleryLayout {
     pub previous_button: Rectangle,
     pub next_button: Rectangle,
     pub preview_button: Rectangle,
+    pub audio_button: Rectangle,
+    pub audio_progress: Rectangle,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct AudioUiState {
+    pub active: bool,
+    pub playing: bool,
+    pub progress: f32,
+    pub elapsed: f32,
+    pub duration: f32,
 }
 
 pub fn draw_cover(drawing: &mut RaylibDrawHandle<'_>) -> Rectangle {
@@ -180,6 +191,7 @@ pub fn draw_gallery(
     assets: &UiAssets,
     gallery: &GalleryState,
     display_name: &str,
+    audio: AudioUiState,
 ) -> GalleryLayout {
     let screen_width = drawing.get_screen_width() as f32;
     let screen_height = drawing.get_screen_height() as f32;
@@ -232,6 +244,15 @@ pub fn draw_gallery(
         left.height * 0.34,
     );
     draw_texture_contained(drawing, &asset.logo, logo_bounds, Color::WHITE);
+
+    let audio_button = Rectangle::new(left.x + 40.0, left.y + left.height - 165.0, 42.0, 42.0);
+    let audio_progress = Rectangle::new(
+        audio_button.x + audio_button.width + 16.0,
+        audio_button.y + 16.0,
+        (left.width - 138.0).max(80.0),
+        10.0,
+    );
+    draw_audio_player(drawing, audio_button, audio_progress, audio);
 
     let preview_button = Rectangle::new(
         right.x + right.width * 0.10,
@@ -292,6 +313,8 @@ pub fn draw_gallery(
         previous_button,
         next_button,
         preview_button,
+        audio_button,
+        audio_progress,
     }
 }
 
@@ -333,6 +356,118 @@ pub fn draw_book_button(drawing: &mut RaylibDrawHandle<'_>, bounds: Rectangle) {
         2.0,
         Color::new(91, 49, 32, 255),
     );
+}
+
+pub fn scene_audio_button(book: Rectangle) -> Rectangle {
+    Rectangle::new(
+        book.x + 5.0,
+        book.y + book.height + 12.0,
+        book.width - 10.0,
+        book.height - 10.0,
+    )
+}
+
+pub fn draw_scene_audio_button(
+    drawing: &mut RaylibDrawHandle<'_>,
+    bounds: Rectangle,
+    hovered: bool,
+    audio: AudioUiState,
+) {
+    let fill = if hovered {
+        Color::new(108, 69, 45, 245)
+    } else {
+        Color::new(76, 42, 28, 235)
+    };
+    drawing.draw_rectangle_rec(bounds, fill);
+    draw_pixel_border(drawing, bounds, Color::new(231, 213, 166, 255), 2.0);
+    let ink = Color::new(238, 220, 174, 255);
+    let x = bounds.x + bounds.width * 0.48;
+    let top = bounds.y + bounds.height * 0.25;
+    drawing.draw_line_ex(Vector2::new(x, top), Vector2::new(x, top + 18.0), 3.0, ink);
+    drawing.draw_line_ex(
+        Vector2::new(x, top),
+        Vector2::new(x + 11.0, top + 3.0),
+        3.0,
+        ink,
+    );
+    drawing.draw_circle((x - 3.0) as i32, (top + 20.0) as i32, 5.0, ink);
+    if audio.playing {
+        drawing.draw_circle(
+            (bounds.x + bounds.width - 8.0) as i32,
+            (bounds.y + 8.0) as i32,
+            3.0,
+            Color::new(120, 224, 137, 255),
+        );
+    }
+}
+
+fn draw_audio_player(
+    drawing: &mut RaylibDrawHandle<'_>,
+    button: Rectangle,
+    track: Rectangle,
+    audio: AudioUiState,
+) {
+    drawing.draw_rectangle_rec(button, Color::new(91, 58, 36, 255));
+    draw_pixel_border(drawing, button, Color::new(54, 36, 24, 255), 2.0);
+    let ink = Color::new(238, 220, 174, 255);
+    if audio.playing {
+        drawing.draw_rectangle_rec(
+            Rectangle::new(button.x + 12.0, button.y + 10.0, 6.0, 22.0),
+            ink,
+        );
+        drawing.draw_rectangle_rec(
+            Rectangle::new(button.x + 24.0, button.y + 10.0, 6.0, 22.0),
+            ink,
+        );
+    } else {
+        drawing.draw_triangle(
+            Vector2::new(button.x + 29.0, button.y + 21.0),
+            Vector2::new(button.x + 14.0, button.y + 11.0),
+            Vector2::new(button.x + 14.0, button.y + 31.0),
+            ink,
+        );
+    }
+    drawing.draw_rectangle_rec(track, Color::new(159, 139, 103, 255));
+    let completed = Rectangle::new(
+        track.x,
+        track.y,
+        track.width * audio.progress.clamp(0.0, 1.0),
+        track.height,
+    );
+    drawing.draw_rectangle_rec(completed, Color::new(91, 58, 36, 255));
+    let knob_x = track.x + track.width * audio.progress.clamp(0.0, 1.0);
+    drawing.draw_circle(
+        knob_x as i32,
+        (track.y + track.height * 0.5) as i32,
+        6.0,
+        Color::new(76, 48, 29, 255),
+    );
+    let time = format!(
+        "{} / {}",
+        format_time(audio.elapsed),
+        format_time(audio.duration)
+    );
+    drawing.draw_text(
+        &time,
+        track.x as i32,
+        (track.y + 16.0) as i32,
+        15,
+        Color::new(66, 45, 30, 255),
+    );
+    if !audio.active {
+        drawing.draw_text(
+            "Intro",
+            track.x as i32,
+            (track.y - 22.0) as i32,
+            15,
+            Color::new(85, 61, 41, 255),
+        );
+    }
+}
+
+fn format_time(seconds: f32) -> String {
+    let seconds = seconds.max(0.0).round() as u32;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
 pub fn contains(rectangle: Rectangle, point: Vector2) -> bool {

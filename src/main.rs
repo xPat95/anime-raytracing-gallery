@@ -1,3 +1,4 @@
+mod audio;
 mod block_geometry;
 mod bvh;
 mod camera;
@@ -22,6 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use audio::AudioManager;
 use bvh::Bvh;
 use camera::Camera;
 use framebuffer::Framebuffer;
@@ -29,11 +31,12 @@ use gallery::SceneConfig;
 use ground::GroundPlane;
 use light::LightingConfig;
 use materials::MaterialCatalog;
+use raylib::audio::RaylibAudio;
 use raylib::prelude::*;
 use render::RenderStrategy;
 use sky::SkyType;
 use texture::Texture;
-use ui::{AppState, GalleryLayout, GalleryState, UiAssets};
+use ui::{AppState, AudioUiState, GalleryLayout, GalleryState, UiAssets};
 
 const INITIAL_WINDOW_WIDTH: i32 = 1280;
 const INITIAL_WINDOW_HEIGHT: i32 = 720;
@@ -267,11 +270,30 @@ fn main() -> Result<(), String> {
         app_state = AppState::Scene;
     }
 
+    // Start streamed audio only after blocking startup asset and scene work is complete.
+    let audio_device = match RaylibAudio::init_audio_device() {
+        Ok(audio) => Some(audio),
+        Err(error) => {
+            eprintln!("Audio device unavailable: {error}");
+            None
+        }
+    };
+    let initial_audio_scene = options
+        .initial_scene_id
+        .as_deref()
+        .unwrap_or("black_clover_skull");
+    let mut audio_manager = audio_device
+        .as_ref()
+        .map(|audio| AudioManager::load(audio, initial_audio_scene));
+
     let mut cover_bounds = Rectangle::default();
     let mut gallery_layout = GalleryLayout::default();
     println!("Scene controls: LMB/WASD orbit, RMB/arrows pan, wheel zoom, R reset");
 
     while !raylib.window_should_close() {
+        if let Some(audio) = audio_manager.as_mut() {
+            audio.update(raylib.get_frame_time());
+        }
         let mouse = raylib.get_mouse_position();
         let left_pressed = raylib.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT);
         match app_state {
@@ -285,29 +307,62 @@ fn main() -> Result<(), String> {
                     || (left_pressed && ui::contains(gallery_layout.previous_button, mouse))
                 {
                     gallery_state.previous();
+                    if let Some(audio) = audio_manager.as_mut() {
+                        audio.select_scene(gallery_state.current_entry().scene_id);
+                    }
                 }
                 if raylib.is_key_pressed(KeyboardKey::KEY_RIGHT)
                     || (left_pressed && ui::contains(gallery_layout.next_button, mouse))
                 {
                     gallery_state.next();
+                    if let Some(audio) = audio_manager.as_mut() {
+                        audio.select_scene(gallery_state.current_entry().scene_id);
+                    }
+                }
+                if left_pressed && ui::contains(gallery_layout.audio_button, mouse) {
+                    if let Some(audio) = audio_manager.as_mut() {
+                        audio.toggle_intro();
+                    }
+                }
+                if left_pressed && ui::contains(gallery_layout.audio_progress, mouse) {
+                    let progress = (mouse.x - gallery_layout.audio_progress.x)
+                        / gallery_layout.audio_progress.width;
+                    if let Some(audio) = audio_manager.as_mut() {
+                        audio.seek(progress);
+                    }
                 }
                 if left_pressed && ui::contains(gallery_layout.preview_button, mouse) {
+                    if let Some(audio) = audio_manager.as_mut() {
+                        audio.cancel_intro_and_resume_background();
+                    }
                     active_scene = Some(ActiveScene::load(
                         find_scene(gallery_state.current_entry().scene_id)?,
                         RunMode::Optimized,
                         &mut raylib,
                         &thread,
                     )?);
+                    if let Some(audio) = audio_manager.as_mut() {
+                        audio.update(0.0);
+                    }
                     app_state = AppState::Scene;
                 }
             }
             AppState::Scene => {
                 let button = ui::book_button(raylib.get_screen_width(), raylib.get_screen_height());
-                let consumes_mouse = ui::contains(button, mouse)
+                let audio_button = ui::scene_audio_button(button);
+                let consumes_mouse = (ui::contains(button, mouse)
+                    || ui::contains(audio_button, mouse))
                     && raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT);
                 if left_pressed && ui::contains(button, mouse) {
+                    if let Some(audio) = audio_manager.as_mut() {
+                        audio.cancel_intro_and_resume_background();
+                    }
                     active_scene = None;
                     app_state = AppState::Gallery;
+                } else if left_pressed && ui::contains(audio_button, mouse) {
+                    if let Some(audio) = audio_manager.as_mut() {
+                        audio.toggle_intro();
+                    }
                 } else if let Some(scene) = active_scene.as_mut() {
                     scene.update_input(&mut raylib, &thread, consumes_mouse)?;
                 }
@@ -317,12 +372,29 @@ fn main() -> Result<(), String> {
         let selected_name = gallery::available_scenes()[gallery_state.current_page()].display_name;
         let screen_width = raylib.get_screen_width();
         let screen_height = raylib.get_screen_height();
+        let audio_status = audio_manager
+            .as_ref()
+            .map_or(AudioUiState::default(), |audio| {
+                let status = audio.status();
+                AudioUiState {
+                    active: status.active,
+                    playing: status.playing,
+                    progress: status.progress,
+                    elapsed: status.elapsed,
+                    duration: status.duration,
+                }
+            });
         let mut drawing = raylib.begin_drawing(&thread);
         match app_state {
             AppState::Cover => cover_bounds = ui::draw_cover(&mut drawing),
             AppState::Gallery => {
-                gallery_layout =
-                    ui::draw_gallery(&mut drawing, &ui_assets, &gallery_state, selected_name);
+                gallery_layout = ui::draw_gallery(
+                    &mut drawing,
+                    &ui_assets,
+                    &gallery_state,
+                    selected_name,
+                    audio_status,
+                );
             }
             AppState::Scene => {
                 drawing.clear_background(Color::BLACK);
@@ -345,7 +417,14 @@ fn main() -> Result<(), String> {
                         Color::WHITE,
                     );
                 }
-                ui::draw_book_button(&mut drawing, ui::book_button(screen_width, screen_height));
+                let book_button = ui::book_button(screen_width, screen_height);
+                ui::draw_book_button(&mut drawing, book_button);
+                ui::draw_scene_audio_button(
+                    &mut drawing,
+                    ui::scene_audio_button(book_button),
+                    ui::contains(ui::scene_audio_button(book_button), mouse),
+                    audio_status,
+                );
             }
         }
     }
