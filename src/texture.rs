@@ -82,4 +82,18 @@ mod tests {
         assert_eq!(texture.sample(0.9, 0.1), Color::GREEN);
         assert_eq!(texture.sample(1.1, -0.9), Color::RED);
     }
+
+    #[test]
+    fn nearest_neighbor_handles_texel_and_wrap_boundaries() {
+        let texture = Texture {
+            width: 2,
+            height: 2,
+            pixels: vec![Color::RED, Color::GREEN, Color::BLUE, Color::WHITE],
+        };
+
+        assert_eq!(texture.sample(0.4999, 0.4999), Color::RED);
+        assert_eq!(texture.sample(0.5, 0.5), Color::WHITE);
+        assert_eq!(texture.sample(0.9999, 0.9999), Color::WHITE);
+        assert_eq!(texture.sample(1.0, 1.0), Color::RED);
+    }
 }
