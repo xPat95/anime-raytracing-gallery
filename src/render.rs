@@ -425,6 +425,9 @@ fn shade_surface(
 }
 
 fn emission_contribution(base_color: Vec3, material: crate::material::Material) -> Vec3 {
+    if material.emission_strength == 0.0 {
+        return Vec3::default();
+    }
     component_multiply(base_color, color_to_vec3(material.emission_tint))
         * material.emission_strength
 }

@@ -4,6 +4,7 @@ use crate::{cube::Cube, intersect::Intersect, ray_intersect::RayIntersect, vec3:
 
 pub const LEAF_SIZE: usize = 4;
 const RAY_EPSILON: f32 = 0.0001;
+const TRAVERSAL_STACK_SIZE: usize = 64;
 
 #[derive(Clone, Copy, Debug)]
 struct Aabb {
@@ -135,17 +136,27 @@ impl Bvh {
         };
         let mut closest = Intersect::empty();
         let mut closest_index = usize::MAX;
-        let mut stack = vec![root];
-
-        while let Some(node_index) = stack.pop() {
-            let node = &self.nodes[node_index];
-            if node
+        let Some((root_near, _)) =
+            self.nodes[root]
                 .bounds
                 .ray_interval(ray_origin, ray_direction, closest.distance)
-                .is_none()
-            {
+        else {
+            return closest;
+        };
+        let mut node_stack = [0usize; TRAVERSAL_STACK_SIZE];
+        let mut near_stack = [0.0f32; TRAVERSAL_STACK_SIZE];
+        let mut stack_len = 1;
+        node_stack[0] = root;
+        near_stack[0] = root_near;
+
+        while stack_len > 0 {
+            stack_len -= 1;
+            let node_index = node_stack[stack_len];
+            let node_near = near_stack[stack_len];
+            if node_near > closest.distance {
                 continue;
             }
+            let node = &self.nodes[node_index];
 
             match node.kind {
                 NodeKind::Leaf { start, count } => {
@@ -174,15 +185,51 @@ impl Bvh {
                     match (left_near, right_near) {
                         (Some(left_distance), Some(right_distance)) => {
                             if left_distance <= right_distance {
-                                stack.push(right);
-                                stack.push(left);
+                                push_stack(
+                                    &mut node_stack,
+                                    &mut near_stack,
+                                    &mut stack_len,
+                                    right,
+                                    right_distance,
+                                );
+                                push_stack(
+                                    &mut node_stack,
+                                    &mut near_stack,
+                                    &mut stack_len,
+                                    left,
+                                    left_distance,
+                                );
                             } else {
-                                stack.push(left);
-                                stack.push(right);
+                                push_stack(
+                                    &mut node_stack,
+                                    &mut near_stack,
+                                    &mut stack_len,
+                                    left,
+                                    left_distance,
+                                );
+                                push_stack(
+                                    &mut node_stack,
+                                    &mut near_stack,
+                                    &mut stack_len,
+                                    right,
+                                    right_distance,
+                                );
                             }
                         }
-                        (Some(_), None) => stack.push(left),
-                        (None, Some(_)) => stack.push(right),
+                        (Some(distance), None) => push_stack(
+                            &mut node_stack,
+                            &mut near_stack,
+                            &mut stack_len,
+                            left,
+                            distance,
+                        ),
+                        (None, Some(distance)) => push_stack(
+                            &mut node_stack,
+                            &mut near_stack,
+                            &mut stack_len,
+                            right,
+                            distance,
+                        ),
                         (None, None) => {}
                     }
                 }
@@ -202,17 +249,21 @@ impl Bvh {
         let Some(root) = self.root else {
             return false;
         };
-        let mut stack = vec![root];
+        if self.nodes[root]
+            .bounds
+            .ray_interval(ray_origin, ray_direction, max_distance)
+            .is_none()
+        {
+            return false;
+        }
+        let mut stack = [0usize; TRAVERSAL_STACK_SIZE];
+        let mut stack_len = 1;
+        stack[0] = root;
 
-        while let Some(node_index) = stack.pop() {
+        while stack_len > 0 {
+            stack_len -= 1;
+            let node_index = stack[stack_len];
             let node = &self.nodes[node_index];
-            if node
-                .bounds
-                .ray_interval(ray_origin, ray_direction, max_distance)
-                .is_none()
-            {
-                continue;
-            }
 
             match node.kind {
                 NodeKind::Leaf { start, count } => {
@@ -225,8 +276,17 @@ impl Bvh {
                     }
                 }
                 NodeKind::Branch { left, right } => {
-                    stack.push(right);
-                    stack.push(left);
+                    for child in [right, left] {
+                        if self.nodes[child]
+                            .bounds
+                            .ray_interval(ray_origin, ray_direction, max_distance)
+                            .is_some()
+                        {
+                            debug_assert!(stack_len < TRAVERSAL_STACK_SIZE);
+                            stack[stack_len] = child;
+                            stack_len += 1;
+                        }
+                    }
                 }
             }
         }
@@ -288,6 +348,20 @@ impl Bvh {
         });
         node_index
     }
+}
+
+#[inline]
+fn push_stack(
+    nodes: &mut [usize; TRAVERSAL_STACK_SIZE],
+    distances: &mut [f32; TRAVERSAL_STACK_SIZE],
+    len: &mut usize,
+    node: usize,
+    distance: f32,
+) {
+    debug_assert!(*len < TRAVERSAL_STACK_SIZE);
+    nodes[*len] = node;
+    distances[*len] = distance;
+    *len += 1;
 }
 
 fn axis_value(value: Vec3, axis: usize) -> f32 {
@@ -360,6 +434,35 @@ mod tests {
 
         assert_eq!(accelerated.distance, linear.distance);
         assert_eq!(accelerated.normal, linear.normal);
+    }
+
+    #[test]
+    fn bvh_matches_linear_for_deterministic_ray_set() {
+        let primitives = [
+            Cube::from_center_size(Vec3::new(-2.0, 1.0, 4.0), 1.0, material()),
+            Cube::from_center_size(Vec3::new(0.0, -1.0, 6.0), 2.0, material()),
+            Cube::from_center_size(Vec3::new(3.0, 2.0, 9.0), 1.5, material()),
+            Cube::from_center_size(Vec3::new(1.0, 0.0, -3.0), 0.5, material()),
+        ];
+        let bvh = Bvh::build(&primitives);
+        let rays = [
+            (Vec3::default(), Vec3::new(-2.0, 1.0, 4.0).normalize()),
+            (Vec3::default(), Vec3::new(0.0, -1.0, 6.0).normalize()),
+            (
+                Vec3::new(5.0, 2.0, 0.0),
+                Vec3::new(-2.0, 0.0, 9.0).normalize(),
+            ),
+            (Vec3::default(), Vec3::new(0.0, 1.0, 0.0)),
+            (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0)),
+        ];
+
+        for (origin, direction) in rays {
+            let linear = linear_hit(&origin, &direction, &primitives);
+            let accelerated = bvh.closest_hit(&origin, &direction, &primitives);
+            assert_eq!(accelerated.is_intersecting, linear.is_intersecting);
+            assert_eq!(accelerated.distance, linear.distance);
+            assert_eq!(accelerated.normal, linear.normal);
+        }
     }
 
     #[test]

@@ -81,6 +81,7 @@ enum RunMode {
     Full,
     Compare,
     BenchmarkAccelerators,
+    BenchmarkQuality,
 }
 
 struct AppOptions {
@@ -410,6 +411,46 @@ fn load_and_render_scene(
     print_scene_metrics(&scene);
     let bvh = build_bvh(&scene.primitives);
     print_bvh_metrics(&bvh);
+    if matches!(mode, RunMode::BenchmarkQuality) {
+        let interactive_resolution = RenderResolution {
+            width: RENDER_QUALITY.interactive_max_width,
+            height: RENDER_QUALITY.interactive_max_height,
+        };
+        let final_resolution = RenderResolution {
+            width: RENDER_QUALITY.final_max_width,
+            height: RENDER_QUALITY.final_max_height,
+        };
+        let (_, interactive_time, workers) = render_scene_at(
+            camera,
+            &scene,
+            &bvh,
+            textures,
+            lighting,
+            config.sky,
+            ground,
+            0.0,
+            RenderStrategy::BvhMultiThread,
+            "quality benchmark interactive",
+            interactive_resolution,
+        );
+        let (frame, final_time, _) = render_scene_at(
+            camera,
+            &scene,
+            &bvh,
+            textures,
+            lighting,
+            config.sky,
+            ground,
+            0.0,
+            RenderStrategy::BvhMultiThread,
+            "quality benchmark final",
+            final_resolution,
+        );
+        println!(
+            "Quality benchmark: interactive {interactive_time:.2?}, final {final_time:.2?}, {workers} workers"
+        );
+        return Ok((scene, bvh, frame));
+    }
     if matches!(mode, RunMode::BenchmarkAccelerators) {
         let (linear, linear_time, _) = render_scene_at(
             camera,
@@ -569,6 +610,7 @@ fn parse_options() -> Result<AppOptions, String> {
             "--no-culling" => mode = RunMode::Full,
             "--compare-culling" => mode = RunMode::Compare,
             "--benchmark-accelerators" => mode = RunMode::BenchmarkAccelerators,
+            "--benchmark-quality" => mode = RunMode::BenchmarkQuality,
             _ => return Err(format!("unknown argument '{argument}'")),
         }
     }
