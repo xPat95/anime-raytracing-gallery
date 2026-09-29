@@ -4,10 +4,10 @@ use raylib::prelude::Color;
 
 use crate::{
     bvh::Bvh, camera::Camera, cube::Cube, framebuffer::Framebuffer, intersect::Intersect,
-    light::LightingConfig, ray_intersect::RayIntersect, texture::Texture, vec3::Vec3,
+    light::LightingConfig, ray_intersect::RayIntersect, sky::SkyType, texture::Texture, vec3::Vec3,
 };
 
-const BACKGROUND: Color = Color::new(18, 22, 30, 255);
+const FRAMEBUFFER_CLEAR: Color = Color::new(18, 22, 30, 255);
 const MAX_RAY_DEPTH: u32 = 8;
 const MAX_SHADOW_HITS: u32 = 16;
 const TRANSMISSION_BIAS: f32 = 0.001;
@@ -55,6 +55,7 @@ pub fn render(
     bvh: &Bvh,
     textures: &[Texture],
     lighting: &LightingConfig,
+    sky: SkyType,
     strategy: RenderStrategy,
 ) -> usize {
     let accelerator = match strategy {
@@ -80,6 +81,7 @@ pub fn render(
             accelerator,
             textures,
             lighting,
+            sky,
         )
     } else {
         render_parallel(
@@ -90,6 +92,7 @@ pub fn render(
             accelerator,
             textures,
             lighting,
+            sky,
         )
     };
     framebuffer
@@ -106,6 +109,7 @@ fn render_parallel(
     accelerator: Accelerator<'_>,
     textures: &[Texture],
     lighting: &LightingConfig,
+    sky: SkyType,
 ) -> Vec<Color> {
     let rows_per_worker = (height as usize).div_ceil(worker_count);
     thread::scope(|scope| {
@@ -128,12 +132,13 @@ fn render_parallel(
                         accelerator,
                         textures,
                         lighting,
+                        sky,
                     )
                 }),
             ));
         }
 
-        let mut pixels = vec![BACKGROUND; (width * height) as usize];
+        let mut pixels = vec![FRAMEBUFFER_CLEAR; (width * height) as usize];
         for (start_y, handle) in handles {
             let rows = handle.join().expect("render worker panicked");
             let start = (start_y * width) as usize;
@@ -153,6 +158,7 @@ fn render_rows(
     accelerator: Accelerator<'_>,
     textures: &[Texture],
     lighting: &LightingConfig,
+    sky: SkyType,
 ) -> Vec<Color> {
     let mut pixels = Vec::with_capacity(((end_y - start_y) * width) as usize);
     for y in start_y..end_y {
@@ -165,6 +171,7 @@ fn render_rows(
                 accelerator,
                 textures,
                 lighting,
+                sky,
                 0,
                 1.0,
             );
@@ -194,12 +201,13 @@ fn trace_ray(
     accelerator: Accelerator<'_>,
     textures: &[Texture],
     lighting: &LightingConfig,
+    sky: SkyType,
     depth: u32,
     contribution: f32,
 ) -> Vec3 {
     let hit = accelerator.closest_hit(ray_origin, ray_direction);
     if !hit.is_intersecting {
-        return background_color(*ray_direction);
+        return background_color(*ray_direction, sky);
     }
 
     let (surface, tint) = shade_surface(
@@ -227,6 +235,7 @@ fn trace_ray(
             accelerator,
             textures,
             lighting,
+            sky,
             depth + 1,
             contribution * transmission_weight,
         );
@@ -247,6 +256,7 @@ fn trace_ray(
         accelerator,
         textures,
         lighting,
+        sky,
         depth + 1,
         contribution * reflectivity,
     );
@@ -385,8 +395,8 @@ fn reflect(incident: Vec3, normal: Vec3) -> Vec3 {
     incident - normal * (2.0 * incident.dot(normal))
 }
 
-fn background_color(_ray_direction: Vec3) -> Vec3 {
-    color_to_vec3(BACKGROUND)
+fn background_color(ray_direction: Vec3, sky: SkyType) -> Vec3 {
+    crate::sky::sample_sky(ray_direction, sky)
 }
 
 fn shadow_visibility(
@@ -632,6 +642,16 @@ mod tests {
     }
 
     #[test]
+    fn every_ray_miss_uses_the_shared_environment_sampler() {
+        let direction = Vec3::new(0.2, 0.4, -0.8).normalize();
+
+        assert_eq!(
+            background_color(direction, SkyType::AuroraNight),
+            crate::sky::sample_sky(direction, SkyType::AuroraNight)
+        );
+    }
+
+    #[test]
     fn transmitted_ray_keeps_direction_and_starts_after_surface() {
         let hit_point = Vec3::new(1.0, 2.0, 3.0);
         let direction = Vec3::new(0.0, 0.0, 1.0);
@@ -760,6 +780,7 @@ mod tests {
             &bvh,
             &[],
             &lighting,
+            SkyType::ClearDay,
             RenderStrategy::BvhSingleThread,
         );
         render(
@@ -769,6 +790,7 @@ mod tests {
             &bvh,
             &[],
             &lighting,
+            SkyType::ClearDay,
             RenderStrategy::BvhMultiThread,
         );
 

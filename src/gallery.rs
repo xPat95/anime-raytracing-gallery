@@ -4,6 +4,7 @@ use crate::{
     camera::CameraConfig,
     light::{LightingConfig, PointLight},
     materials::{BlockGeometry, MaterialConfig, TextureConfig},
+    sky::SkyType,
     vec3::Vec3,
 };
 
@@ -15,6 +16,7 @@ pub struct SceneConfig {
     pub materials: Vec<MaterialConfig>,
     pub camera: CameraConfig,
     pub lighting: LightingConfig,
+    pub sky: SkyType,
 }
 
 pub fn available_scenes() -> Vec<SceneConfig> {
@@ -129,6 +131,7 @@ fn black_clover_skull() -> SceneConfig {
             shadow_bias: 0.001,
             phong_shininess: 32.0,
         },
+        sky: SkyType::Sunset,
     }
 }
 
@@ -208,6 +211,7 @@ fn shenlong() -> SceneConfig {
             shadow_bias: 0.001,
             phong_shininess: 32.0,
         },
+        sky: SkyType::Cloudy,
     }
 }
 
@@ -251,6 +255,7 @@ fn kurama() -> SceneConfig {
             shadow_bias: 0.001,
             phong_shininess: 32.0,
         },
+        sky: SkyType::StarryNight,
     }
 }
 
@@ -292,6 +297,7 @@ fn pochita() -> SceneConfig {
             shadow_bias: 0.001,
             phong_shininess: 32.0,
         },
+        sky: SkyType::ClearDay,
     }
 }
 
@@ -367,6 +373,7 @@ fn lapras() -> SceneConfig {
             shadow_bias: 0.001,
             phong_shininess: 32.0,
         },
+        sky: SkyType::AuroraNight,
     }
 }
 
@@ -546,6 +553,11 @@ mod tests {
         assert_eq!(scenes[4].id, "lapras");
         assert_eq!(scenes[4].display_name, "Lapras");
         assert_eq!(scenes[4].scene_path, "assets/scenes/lapras.scene");
+        assert_eq!(scenes[0].sky, SkyType::Sunset);
+        assert_eq!(scenes[1].sky, SkyType::Cloudy);
+        assert_eq!(scenes[2].sky, SkyType::StarryNight);
+        assert_eq!(scenes[3].sky, SkyType::ClearDay);
+        assert_eq!(scenes[4].sky, SkyType::AuroraNight);
     }
 
     #[test]

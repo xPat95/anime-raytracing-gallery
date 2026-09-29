@@ -11,6 +11,7 @@ mod materials;
 mod ray_intersect;
 mod render;
 mod scene;
+mod sky;
 mod texture;
 mod ui;
 mod vec3;
@@ -28,6 +29,7 @@ use light::LightingConfig;
 use materials::MaterialCatalog;
 use raylib::prelude::*;
 use render::RenderStrategy;
+use sky::SkyType;
 use texture::Texture;
 use ui::{AppState, GalleryLayout, GalleryState, UiAssets};
 
@@ -89,6 +91,7 @@ struct ActiveScene {
     bvh: Bvh,
     camera: Camera,
     lighting: LightingConfig,
+    sky: SkyType,
     textures: Vec<Texture>,
     framebuffer: Framebuffer,
     display_texture: Texture2D,
@@ -107,6 +110,7 @@ impl ActiveScene {
         println!("Selected scene: {} ({})", config.display_name, config.id);
         let camera = Camera::new(config.camera);
         let lighting = config.lighting;
+        let sky = config.sky;
         let (materials, textures) = MaterialCatalog::load(&config.textures, &config.materials)?;
         let resolution = target_resolution(
             raylib.get_screen_width(),
@@ -127,6 +131,7 @@ impl ActiveScene {
             bvh,
             camera,
             lighting,
+            sky,
             textures,
             framebuffer,
             display_texture,
@@ -194,6 +199,7 @@ impl ActiveScene {
                 &self.bvh,
                 &self.textures,
                 &self.lighting,
+                self.sky,
                 RenderStrategy::BvhMultiThread,
                 label,
                 desired_resolution,
@@ -350,6 +356,7 @@ fn load_and_render_scene(
             &full_bvh,
             textures,
             lighting,
+            config.sky,
             RenderStrategy::BvhMultiThread,
             "full scene",
             resolution,
@@ -360,6 +367,7 @@ fn load_and_render_scene(
             &optimized_bvh,
             textures,
             lighting,
+            config.sky,
             RenderStrategy::BvhMultiThread,
             "optimized scene",
             resolution,
@@ -384,6 +392,7 @@ fn load_and_render_scene(
             &bvh,
             textures,
             lighting,
+            config.sky,
             RenderStrategy::LinearSingleThread,
             "linear single-thread",
             resolution,
@@ -394,6 +403,7 @@ fn load_and_render_scene(
             &bvh,
             textures,
             lighting,
+            config.sky,
             RenderStrategy::BvhSingleThread,
             "BVH single-thread",
             resolution,
@@ -405,6 +415,7 @@ fn load_and_render_scene(
             &bvh,
             textures,
             lighting,
+            config.sky,
             RenderStrategy::BvhMultiThread,
             "BVH multi-thread",
             resolution,
@@ -426,6 +437,7 @@ fn load_and_render_scene(
         &bvh,
         textures,
         lighting,
+        config.sky,
         RenderStrategy::BvhMultiThread,
         label,
         resolution,
@@ -533,6 +545,7 @@ fn render_scene_at(
     bvh: &Bvh,
     textures: &[Texture],
     lighting: &LightingConfig,
+    sky: SkyType,
     strategy: RenderStrategy,
     label: &str,
     resolution: RenderResolution,
@@ -552,6 +565,7 @@ fn render_scene_at(
         bvh,
         textures,
         lighting,
+        sky,
         strategy,
     );
     let elapsed = started.elapsed();
