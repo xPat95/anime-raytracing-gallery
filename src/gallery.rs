@@ -2,7 +2,7 @@ use raylib::prelude::Color;
 
 use crate::{
     camera::CameraConfig,
-    ground::{GroundConfig, GroundKind},
+    ground::{GroundConfig, GroundKind, SolidGroundStyle},
     light::{LightingConfig, PointLight},
     materials::{BlockGeometry, MaterialConfig, TextureConfig},
     sky::SkyType,
@@ -124,12 +124,14 @@ fn black_clover_skull() -> SceneConfig {
         rotate_y_180: false,
         textures,
         materials,
-        camera: CameraConfig::from_position(
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(145.0, 95.0, 180.0),
-            5.0,
-            420.0,
-        ),
+        camera: CameraConfig {
+            target: Vec3::new(0.0, 0.0, 0.0),
+            yaw: 5.843164,
+            pitch: -0.04921361,
+            radius: 249.89998,
+            min_radius: 5.0,
+            max_radius: 420.0,
+        },
         lighting: LightingConfig {
             light: PointLight {
                 position: Vec3::new(-90.0, 125.0, 140.0),
@@ -141,7 +143,14 @@ fn black_clover_skull() -> SceneConfig {
             phong_shininess: 32.0,
         },
         sky: SkyType::Sunset,
-        ground: solid_ground(-42.501, Color::new(43, 48, 52, 255), 0.72, 0.04, 0.01),
+        ground: solid_ground(
+            SolidGroundStyle::DarkRock,
+            -42.501,
+            Color::new(43, 48, 52, 255),
+            0.72,
+            0.04,
+            0.01,
+        ),
     }
 }
 
@@ -206,12 +215,14 @@ fn shenlong() -> SceneConfig {
         rotate_y_180: false,
         textures,
         materials,
-        camera: CameraConfig::from_position(
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(205.0, 140.0, 248.0),
-            5.0,
-            550.0,
-        ),
+        camera: CameraConfig {
+            target: Vec3::new(0.0, 0.0, 0.0),
+            yaw: 6.017248,
+            pitch: -0.058275938,
+            radius: 242.89743,
+            min_radius: 5.0,
+            max_radius: 550.0,
+        },
         lighting: LightingConfig {
             light: PointLight {
                 position: Vec3::new(140.0, 220.0, 200.0),
@@ -223,7 +234,14 @@ fn shenlong() -> SceneConfig {
             phong_shininess: 32.0,
         },
         sky: SkyType::Cloudy,
-        ground: solid_ground(-75.001, Color::new(74, 118, 62, 255), 0.78, 0.04, 0.01),
+        ground: solid_ground(
+            SolidGroundStyle::Grass,
+            -75.001,
+            Color::new(74, 118, 62, 255),
+            0.78,
+            0.04,
+            0.01,
+        ),
     }
 }
 
@@ -252,12 +270,14 @@ fn kurama() -> SceneConfig {
         rotate_y_180: false,
         textures,
         materials,
-        camera: CameraConfig::from_position(
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(211.0, 134.0, 246.0),
-            12.0,
-            850.0,
-        ),
+        camera: CameraConfig {
+            target: Vec3::new(0.0, 0.0, 0.0),
+            yaw: 0.56844753,
+            pitch: -0.12836851,
+            radius: 350.70358,
+            min_radius: 12.0,
+            max_radius: 850.0,
+        },
         lighting: LightingConfig {
             light: PointLight {
                 position: Vec3::new(260.0, 320.0, 300.0),
@@ -269,7 +289,14 @@ fn kurama() -> SceneConfig {
             phong_shininess: 32.0,
         },
         sky: SkyType::StarryNight,
-        ground: solid_ground(-85.001, Color::new(82, 84, 86, 255), 0.72, 0.06, 0.02),
+        ground: solid_ground(
+            SolidGroundStyle::Stone,
+            -85.001,
+            Color::new(82, 84, 86, 255),
+            0.72,
+            0.06,
+            0.02,
+        ),
     }
 }
 
@@ -296,12 +323,14 @@ fn pochita() -> SceneConfig {
         rotate_y_180: true,
         textures,
         materials,
-        camera: CameraConfig::from_position(
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(78.0, 53.0, 111.0),
-            5.0,
-            320.0,
-        ),
+        camera: CameraConfig {
+            target: Vec3::new(0.0, 0.0, 0.0),
+            yaw: 0.61253756,
+            pitch: 0.00949266,
+            radius: 145.65027,
+            min_radius: 5.0,
+            max_radius: 320.0,
+        },
         lighting: LightingConfig {
             light: PointLight {
                 position: Vec3::new(90.0, 130.0, 120.0),
@@ -313,7 +342,14 @@ fn pochita() -> SceneConfig {
             phong_shininess: 32.0,
         },
         sky: SkyType::ClearDay,
-        ground: solid_ground(-32.501, Color::new(92, 170, 70, 255), 0.88, 0.05, 0.015),
+        ground: solid_ground(
+            SolidGroundStyle::VividGrass,
+            -32.501,
+            Color::new(92, 170, 70, 255),
+            0.88,
+            0.05,
+            0.015,
+        ),
     }
 }
 
@@ -378,12 +414,14 @@ fn lapras() -> SceneConfig {
         rotate_y_180: false,
         textures,
         materials,
-        camera: CameraConfig::from_position(
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(95.0, 62.0, 111.0),
-            5.0,
-            450.0,
-        ),
+        camera: CameraConfig {
+            target: Vec3::new(0.0, 0.0, 0.0),
+            yaw: 0.3565358,
+            pitch: 0.017473549,
+            radius: 146.71358,
+            min_radius: 5.0,
+            max_radius: 450.0,
+        },
         lighting: LightingConfig {
             light: PointLight {
                 position: Vec3::new(130.0, 170.0, 150.0),
@@ -397,6 +435,7 @@ fn lapras() -> SceneConfig {
         sky: SkyType::AuroraNight,
         ground: GroundConfig {
             kind: GroundKind::Water,
+            solid_style: None,
             height: -30.0,
             tint: Color::new(190, 232, 240, 255),
             albedo: 0.18,
@@ -519,6 +558,7 @@ fn texture(id: &'static str, path: &'static str) -> TextureConfig {
 }
 
 fn solid_ground(
+    solid_style: SolidGroundStyle,
     height: f32,
     tint: Color,
     albedo: f32,
@@ -527,6 +567,7 @@ fn solid_ground(
 ) -> GroundConfig {
     GroundConfig {
         kind: GroundKind::Solid,
+        solid_style: Some(solid_style),
         height,
         tint,
         albedo,
@@ -629,11 +670,21 @@ mod tests {
         assert_eq!(scenes[3].sky, SkyType::ClearDay);
         assert_eq!(scenes[4].sky, SkyType::AuroraNight);
         assert_eq!(scenes[0].ground.kind, GroundKind::Solid);
+        assert_eq!(
+            scenes[0].ground.solid_style,
+            Some(SolidGroundStyle::DarkRock)
+        );
         assert_eq!(scenes[0].ground.height, -42.501);
         assert_eq!(scenes[1].ground.kind, GroundKind::Solid);
+        assert_eq!(scenes[1].ground.solid_style, Some(SolidGroundStyle::Grass));
         assert_eq!(scenes[1].ground.height, -75.001);
         assert_eq!(scenes[2].ground.height, -85.001);
+        assert_eq!(scenes[2].ground.solid_style, Some(SolidGroundStyle::Stone));
         assert_eq!(scenes[3].ground.height, -32.501);
+        assert_eq!(
+            scenes[3].ground.solid_style,
+            Some(SolidGroundStyle::VividGrass)
+        );
         assert!(scenes[0].ground.tint.r < scenes[2].ground.tint.r);
         assert!(scenes[0].ground.tint.g < scenes[2].ground.tint.g);
         assert!(scenes[1].ground.tint.g > scenes[1].ground.tint.r);
@@ -645,6 +696,7 @@ mod tests {
                 .all(|texture| texture.id != "deepslate" && texture.id != "grass_block_top")
         }));
         assert_eq!(scenes[4].ground.kind, GroundKind::Water);
+        assert_eq!(scenes[4].ground.solid_style, None);
         assert_eq!(scenes[4].ground.height, -30.0);
         assert!(scenes[4].ground.transparency > 0.0);
         assert!(scenes[4].ground.reflectivity > 0.0);
@@ -678,8 +730,8 @@ mod tests {
         let scene = black_clover_skull();
         assert_eq!(scene.camera.target, Vec3::new(0.0, 0.0, 0.0));
         assert!((scene.camera.radius - 249.89998).abs() < 0.001);
-        assert!((scene.camera.yaw.to_degrees() - 38.853).abs() < 0.001);
-        assert!((scene.camera.pitch.to_degrees() - 22.343).abs() < 0.001);
+        assert_eq!(scene.camera.yaw, 5.843164);
+        assert_eq!(scene.camera.pitch, -0.04921361);
         assert_eq!(scene.camera.min_radius, 5.0);
         assert_eq!(scene.camera.max_radius, 420.0);
         assert_eq!(scene.materials.len(), 8);
@@ -696,6 +748,31 @@ mod tests {
             .unwrap();
         assert_eq!(portal.transparency, 0.45);
         assert_eq!(portal.ior, None);
+    }
+
+    #[test]
+    fn scenes_keep_the_runtime_camera_snapshots() {
+        let expected = [
+            (5.843164, -0.04921361, 249.89998),
+            (6.017248, -0.058275938, 242.89743),
+            (0.56844753, -0.12836851, 350.70358),
+            (0.61253756, 0.00949266, 145.65027),
+            (0.3565358, 0.017473549, 146.71358),
+        ];
+
+        for (scene, (yaw, pitch, radius)) in available_scenes().iter().zip(expected) {
+            assert_eq!(scene.camera.yaw, yaw);
+            assert_eq!(scene.camera.pitch, pitch);
+            assert_eq!(scene.camera.radius, radius);
+
+            let mut camera = crate::camera::Camera::new(scene.camera);
+            let initial_position = camera.position();
+            camera.orbit(20.0, -10.0);
+            camera.zoom(2.0);
+            assert!(camera.reset());
+            assert!((camera.position() - initial_position).length() < 0.001);
+            assert_eq!(camera.radius(), radius);
+        }
     }
 
     #[test]

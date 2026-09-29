@@ -34,6 +34,7 @@ pub struct CameraConfig {
 }
 
 impl CameraConfig {
+    #[cfg(test)]
     pub fn from_position(target: Vec3, position: Vec3, min_radius: f32, max_radius: f32) -> Self {
         let offset = position - target;
         let radius = offset.length();

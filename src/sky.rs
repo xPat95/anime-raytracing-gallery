@@ -11,38 +11,52 @@ pub enum SkyType {
     AuroraNight,
 }
 
-pub fn sample_sky(direction: Vec3, sky: SkyType) -> Vec3 {
+pub fn sample_sky(direction: Vec3, sky: SkyType, sun_direction: Option<Vec3>) -> Vec3 {
     let direction = direction.normalize();
     let color = match sky {
-        SkyType::Sunset => sunset(direction),
+        SkyType::Sunset => sunset(
+            direction,
+            sun_direction.unwrap_or(Vec3::new(-0.72, -0.10, -0.68).normalize()),
+        ),
         SkyType::Cloudy => cloudy(direction),
         SkyType::StarryNight => starry_night(direction),
-        SkyType::ClearDay => clear_day(direction),
+        SkyType::ClearDay => clear_day(
+            direction,
+            sun_direction.unwrap_or(Vec3::new(-0.62, -0.18, -0.76).normalize()),
+        ),
         SkyType::AuroraNight => aurora_night(direction),
     };
     clamp_color(color)
 }
 
-fn sunset(direction: Vec3) -> Vec3 {
-    let horizon = Vec3::new(0.95, 0.38, 0.12);
-    let middle = Vec3::new(0.58, 0.16, 0.28);
-    let zenith = Vec3::new(0.10, 0.08, 0.24);
-    let lower = Vec3::new(0.12, 0.09, 0.15);
-    let lower_to_horizon = atmospheric_gradient(lower, horizon, middle, direction.y);
-    let color = mix(
-        lower_to_horizon,
-        zenith,
-        smoothstep(0.25, 0.90, direction.y),
-    );
+fn sunset(direction: Vec3, sun_direction: Vec3) -> Vec3 {
+    let lower = Vec3::new(0.12, 0.075, 0.13);
+    let horizon = Vec3::new(1.0, 0.47, 0.13);
+    let orange_red = Vec3::new(0.82, 0.24, 0.16);
+    let middle = Vec3::new(0.46, 0.12, 0.29);
+    let zenith = Vec3::new(0.075, 0.075, 0.22);
+    let mut color = mix(lower, horizon, smoothstep(-0.34, 0.045, direction.y));
+    color = mix(color, orange_red, smoothstep(0.015, 0.30, direction.y));
+    color = mix(color, middle, smoothstep(0.18, 0.58, direction.y));
+    color = mix(color, zenith, smoothstep(0.48, 0.94, direction.y));
+
+    let horizon_haze = 1.0 - smoothstep(0.0, 0.30, direction.y.abs());
+    color = mix(color, Vec3::new(1.0, 0.58, 0.24), horizon_haze * 0.20);
+    let longitude = direction.z.atan2(direction.x);
+    let broad_variation = ((longitude * 0.73 + direction.y * 1.8).sin()
+        + (longitude * 1.17 - direction.y * 1.3 + 2.1).cos())
+        * 0.006;
+    color = color + Vec3::new(1.0, 0.55, 0.42) * broad_variation;
+
     add_sun(
         color,
         direction,
-        Vec3::new(-0.72, -0.10, -0.68).normalize(),
+        sun_direction,
         Vec3::new(1.0, 0.94, 0.72),
-        Vec3::new(1.0, 0.43, 0.10),
-        0.99955,
-        0.965,
-        0.22,
+        Vec3::new(1.0, 0.40, 0.08),
+        0.99935,
+        0.945,
+        0.28,
     )
 }
 
@@ -82,7 +96,7 @@ fn starry_night(direction: Vec3) -> Vec3 {
     )
 }
 
-fn clear_day(direction: Vec3) -> Vec3 {
+fn clear_day(direction: Vec3, sun_direction: Vec3) -> Vec3 {
     let horizon = Vec3::new(0.72, 0.88, 1.0);
     let zenith = Vec3::new(0.08, 0.40, 0.88);
     let lower = Vec3::new(0.30, 0.48, 0.65);
@@ -90,7 +104,7 @@ fn clear_day(direction: Vec3) -> Vec3 {
     add_sun(
         color,
         direction,
-        Vec3::new(-0.62, -0.18, -0.76).normalize(),
+        sun_direction,
         Vec3::new(1.0, 0.98, 0.86),
         Vec3::new(1.0, 0.88, 0.55),
         0.99965,
@@ -219,7 +233,7 @@ mod tests {
                 Vec3::new(1.0, 0.0, 0.0),
                 Vec3::new(-0.4, -0.7, 0.2),
             ] {
-                let color = sample_sky(direction, sky);
+                let color = sample_sky(direction, sky, None);
                 for channel in [color.x, color.y, color.z] {
                     assert!((0.0..=1.0).contains(&channel));
                 }
@@ -232,16 +246,16 @@ mod tests {
         let first = Vec3::new(0.3, 0.7, -0.2);
         let second = Vec3::new(-0.8, 0.1, 0.4);
         for sky in SKIES {
-            assert_eq!(sample_sky(first, sky), sample_sky(first, sky));
-            assert_ne!(sample_sky(first, sky), sample_sky(second, sky));
+            assert_eq!(sample_sky(first, sky, None), sample_sky(first, sky, None));
+            assert_ne!(sample_sky(first, sky, None), sample_sky(second, sky, None));
         }
     }
 
     #[test]
     fn clear_day_has_distinct_horizon_and_zenith() {
         assert_ne!(
-            sample_sky(Vec3::new(1.0, 0.0, 0.0), SkyType::ClearDay),
-            sample_sky(Vec3::new(0.0, 1.0, 0.0), SkyType::ClearDay)
+            sample_sky(Vec3::new(1.0, 0.0, 0.0), SkyType::ClearDay, None),
+            sample_sky(Vec3::new(0.0, 1.0, 0.0), SkyType::ClearDay, None)
         );
     }
 
@@ -249,12 +263,12 @@ mod tests {
     fn stars_and_aurora_do_not_depend_on_random_state() {
         let direction = Vec3::new(0.41, 0.52, -0.75);
         assert_eq!(
-            sample_sky(direction, SkyType::StarryNight),
-            sample_sky(direction, SkyType::StarryNight)
+            sample_sky(direction, SkyType::StarryNight, None),
+            sample_sky(direction, SkyType::StarryNight, None)
         );
         assert_eq!(
-            sample_sky(direction, SkyType::AuroraNight),
-            sample_sky(direction, SkyType::AuroraNight)
+            sample_sky(direction, SkyType::AuroraNight, None),
+            sample_sky(direction, SkyType::AuroraNight, None)
         );
     }
 
@@ -262,11 +276,23 @@ mod tests {
     fn skies_are_continuous_across_the_horizon() {
         let epsilon = 0.0001;
         for sky in SKIES {
-            let above = sample_sky(Vec3::new(0.37, epsilon, -0.93), sky);
-            let below = sample_sky(Vec3::new(0.37, -epsilon, -0.93), sky);
+            let above = sample_sky(Vec3::new(0.37, epsilon, -0.93), sky, None);
+            let below = sample_sky(Vec3::new(0.37, -epsilon, -0.93), sky, None);
             assert!(
                 (above - below).length() < 0.12,
                 "{sky:?} has a horizon jump"
+            );
+        }
+    }
+
+    #[test]
+    fn visible_sun_uses_the_configured_direction() {
+        for sky in [SkyType::Sunset, SkyType::ClearDay] {
+            let sun = Vec3::new(0.3, 0.7, -0.4).normalize();
+            let away = -sun;
+            assert!(
+                sample_sky(sun, sky, Some(sun)).length()
+                    > sample_sky(away, sky, Some(sun)).length()
             );
         }
     }

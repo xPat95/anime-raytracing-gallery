@@ -259,7 +259,7 @@ fn trace_ray(
     let scene_hit = accelerator.closest_hit_with_ground(ray_origin, ray_direction, ground);
     let hit = scene_hit.intersection;
     if !hit.is_intersecting {
-        return background_color(*ray_direction, sky);
+        return background_color(*ray_direction, sky, visible_sun_direction(sky, lighting));
     }
 
     let hit_point = *ray_origin + *ray_direction * hit.distance;
@@ -378,7 +378,7 @@ fn shade_surface(
             )
         });
     if is_ground {
-        base_color = base_color * ground.color_variation(hit_point);
+        base_color = ground.surface_color(hit_point, base_color);
     }
     let to_light = lighting.light.position - hit_point;
     let light_distance = to_light.length();
@@ -493,8 +493,12 @@ fn reflect(incident: Vec3, normal: Vec3) -> Vec3 {
     incident - normal * (2.0 * incident.dot(normal))
 }
 
-fn background_color(ray_direction: Vec3, sky: SkyType) -> Vec3 {
-    crate::sky::sample_sky(ray_direction, sky)
+fn background_color(ray_direction: Vec3, sky: SkyType, sun_direction: Option<Vec3>) -> Vec3 {
+    crate::sky::sample_sky(ray_direction, sky, sun_direction)
+}
+
+fn visible_sun_direction(sky: SkyType, lighting: &LightingConfig) -> Option<Vec3> {
+    matches!(sky, SkyType::Sunset | SkyType::ClearDay).then(|| lighting.light.position.normalize())
 }
 
 fn shadow_visibility(
@@ -585,13 +589,18 @@ mod tests {
     use super::*;
     use crate::{
         camera::CameraConfig,
-        ground::{GroundKind, GroundPlane},
+        ground::{GroundKind, GroundPlane, SolidGroundStyle},
         light::PointLight,
         material::Material,
     };
 
     fn distant_ground() -> GroundPlane {
-        GroundPlane::new(GroundKind::Solid, -1_000.0, Material::new(Color::WHITE))
+        GroundPlane::new(
+            GroundKind::Solid,
+            Some(SolidGroundStyle::Stone),
+            -1_000.0,
+            Material::new(Color::WHITE),
+        )
     }
 
     #[test]
@@ -790,8 +799,8 @@ mod tests {
         let direction = Vec3::new(0.2, 0.4, -0.8).normalize();
 
         assert_eq!(
-            background_color(direction, SkyType::AuroraNight),
-            crate::sky::sample_sky(direction, SkyType::AuroraNight)
+            background_color(direction, SkyType::AuroraNight, None),
+            crate::sky::sample_sky(direction, SkyType::AuroraNight, None)
         );
     }
 
@@ -953,5 +962,30 @@ mod tests {
         let difference = single.difference(&multi).unwrap();
         assert_eq!(difference.different_pixels, 0);
         assert_eq!(difference.maximum_channel_difference, 0);
+    }
+
+    #[test]
+    fn visible_sun_is_derived_from_the_existing_point_light() {
+        let lighting = LightingConfig {
+            light: PointLight {
+                position: Vec3::new(-90.0, 125.0, 140.0),
+                color: Color::WHITE,
+                intensity: 1.15,
+            },
+            ambient_intensity: 0.1,
+            shadow_bias: 0.001,
+            phong_shininess: 32.0,
+        };
+        assert_eq!(
+            visible_sun_direction(SkyType::Sunset, &lighting),
+            Some(lighting.light.position.normalize())
+        );
+        assert_eq!(
+            visible_sun_direction(SkyType::ClearDay, &lighting),
+            Some(lighting.light.position.normalize())
+        );
+        assert_eq!(visible_sun_direction(SkyType::Cloudy, &lighting), None);
+        assert_eq!(visible_sun_direction(SkyType::StarryNight, &lighting), None);
+        assert_eq!(visible_sun_direction(SkyType::AuroraNight, &lighting), None);
     }
 }
