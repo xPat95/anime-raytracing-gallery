@@ -3,8 +3,9 @@ use std::thread;
 use raylib::prelude::Color;
 
 use crate::{
-    bvh::Bvh, camera::Camera, cube::Cube, framebuffer::Framebuffer, intersect::Intersect,
-    light::LightingConfig, ray_intersect::RayIntersect, sky::SkyType, texture::Texture, vec3::Vec3,
+    bvh::Bvh, camera::Camera, cube::Cube, framebuffer::Framebuffer, ground::GroundPlane,
+    intersect::Intersect, light::LightingConfig, ray_intersect::RayIntersect, sky::SkyType,
+    texture::Texture, vec3::Vec3,
 };
 
 const FRAMEBUFFER_CLEAR: Color = Color::new(18, 22, 30, 255);
@@ -27,11 +28,38 @@ enum Accelerator<'a> {
     Bvh(&'a Bvh, &'a [Cube]),
 }
 
+#[derive(Clone, Copy)]
+struct SceneHit {
+    intersection: Intersect,
+    is_ground: bool,
+}
+
 impl Accelerator<'_> {
     fn closest_hit(self, ray_origin: &Vec3, ray_direction: &Vec3) -> Intersect {
         match self {
             Self::Linear(cubes) => cast_ray_linear(ray_origin, ray_direction, cubes),
             Self::Bvh(bvh, cubes) => bvh.closest_hit(ray_origin, ray_direction, cubes),
+        }
+    }
+
+    fn closest_hit_with_ground(
+        self,
+        ray_origin: &Vec3,
+        ray_direction: &Vec3,
+        ground: &GroundPlane,
+    ) -> SceneHit {
+        let geometry_hit = self.closest_hit(ray_origin, ray_direction);
+        let ground_hit = ground.ray_intersect(ray_origin, ray_direction);
+        if ground_hit.is_intersecting && ground_hit.distance < geometry_hit.distance {
+            SceneHit {
+                intersection: ground_hit,
+                is_ground: true,
+            }
+        } else {
+            SceneHit {
+                intersection: geometry_hit,
+                is_ground: false,
+            }
         }
     }
 
@@ -56,6 +84,7 @@ pub fn render(
     textures: &[Texture],
     lighting: &LightingConfig,
     sky: SkyType,
+    ground: &GroundPlane,
     strategy: RenderStrategy,
 ) -> usize {
     let accelerator = match strategy {
@@ -82,6 +111,7 @@ pub fn render(
             textures,
             lighting,
             sky,
+            ground,
         )
     } else {
         render_parallel(
@@ -93,6 +123,7 @@ pub fn render(
             textures,
             lighting,
             sky,
+            ground,
         )
     };
     framebuffer
@@ -110,6 +141,7 @@ fn render_parallel(
     textures: &[Texture],
     lighting: &LightingConfig,
     sky: SkyType,
+    ground: &GroundPlane,
 ) -> Vec<Color> {
     let rows_per_worker = (height as usize).div_ceil(worker_count);
     thread::scope(|scope| {
@@ -133,6 +165,7 @@ fn render_parallel(
                         textures,
                         lighting,
                         sky,
+                        ground,
                     )
                 }),
             ));
@@ -159,6 +192,7 @@ fn render_rows(
     textures: &[Texture],
     lighting: &LightingConfig,
     sky: SkyType,
+    ground: &GroundPlane,
 ) -> Vec<Color> {
     let mut pixels = Vec::with_capacity(((end_y - start_y) * width) as usize);
     for y in start_y..end_y {
@@ -172,6 +206,7 @@ fn render_rows(
                 textures,
                 lighting,
                 sky,
+                ground,
                 0,
                 1.0,
             );
@@ -202,24 +237,36 @@ fn trace_ray(
     textures: &[Texture],
     lighting: &LightingConfig,
     sky: SkyType,
+    ground: &GroundPlane,
     depth: u32,
     contribution: f32,
 ) -> Vec3 {
-    let hit = accelerator.closest_hit(ray_origin, ray_direction);
+    let scene_hit = accelerator.closest_hit_with_ground(ray_origin, ray_direction, ground);
+    let hit = scene_hit.intersection;
     if !hit.is_intersecting {
         return background_color(*ray_direction, sky);
     }
 
+    let hit_point = *ray_origin + *ray_direction * hit.distance;
+    let geometric_normal = hit.normal.normalize();
+    let shading_normal = if scene_hit.is_ground {
+        ground.shading_normal(hit_point)
+    } else {
+        geometric_normal
+    };
+
     let (surface, tint) = shade_surface(
         hit,
-        ray_origin,
+        hit_point,
         ray_direction,
+        shading_normal,
+        geometric_normal,
+        scene_hit.is_ground,
         accelerator,
         textures,
         lighting,
+        ground,
     );
-    let hit_point = *ray_origin + *ray_direction * hit.distance;
-    let normal = hit.normal.normalize();
     let transparency = hit.material.transparency.clamp(0.0, 1.0);
     let reflectivity = hit.material.reflectivity.clamp(0.0, 1.0);
     let transmission_weight = (1.0 - reflectivity) * transparency;
@@ -227,8 +274,13 @@ fn trace_ray(
         && is_significant(contribution * transmission_weight)
     {
         let transmitted_direction =
-            transmission_direction(*ray_direction, normal, hit.material.ior);
-        let transmitted_origin = transmitted_ray_origin(hit_point, transmitted_direction);
+            transmission_direction(*ray_direction, shading_normal, hit.material.ior);
+        let transmitted_origin = secondary_ray_origin(
+            hit_point,
+            geometric_normal,
+            transmitted_direction,
+            TRANSMISSION_BIAS,
+        );
         let transmitted = trace_ray(
             &transmitted_origin,
             &transmitted_direction,
@@ -236,6 +288,7 @@ fn trace_ray(
             textures,
             lighting,
             sky,
+            ground,
             depth + 1,
             contribution * transmission_weight,
         );
@@ -248,8 +301,13 @@ fn trace_ray(
         return transmission_blend;
     }
 
-    let reflected_direction = reflect(*ray_direction, normal).normalize();
-    let reflected_origin = reflected_ray_origin(hit_point, normal, reflected_direction);
+    let reflected_direction = reflect(*ray_direction, shading_normal).normalize();
+    let reflected_origin = secondary_ray_origin(
+        hit_point,
+        geometric_normal,
+        reflected_direction,
+        REFLECTION_BIAS,
+    );
     let reflected = trace_ray(
         &reflected_origin,
         &reflected_direction,
@@ -257,6 +315,7 @@ fn trace_ray(
         textures,
         lighting,
         sky,
+        ground,
         depth + 1,
         contribution * reflectivity,
     );
@@ -277,32 +336,39 @@ fn is_significant(contribution: f32) -> bool {
 
 fn shade_surface(
     hit: Intersect,
-    ray_origin: &Vec3,
+    hit_point: Vec3,
     ray_direction: &Vec3,
+    normal: Vec3,
+    geometric_normal: Vec3,
+    is_ground: bool,
     accelerator: Accelerator<'_>,
     textures: &[Texture],
     lighting: &LightingConfig,
+    ground: &GroundPlane,
 ) -> (Vec3, Vec3) {
-    let surface_color = hit
+    let material_tint = color_to_vec3(hit.material.base_color);
+    let mut base_color = hit
         .material
         .texture_index
         .and_then(|index| textures.get(index))
-        .map_or(hit.material.base_color, |texture| {
-            texture.sample(hit.u, hit.v)
+        .map_or(material_tint, |texture| {
+            component_multiply(color_to_vec3(texture.sample(hit.u, hit.v)), material_tint)
         });
-    let hit_point = *ray_origin + *ray_direction * hit.distance;
-    let normal = hit.normal.normalize();
+    if is_ground {
+        base_color = base_color * ground.color_variation(hit_point);
+    }
     let to_light = lighting.light.position - hit_point;
     let light_distance = to_light.length();
     let light_direction = to_light / light_distance;
     let diffuse_angle = lambert(normal, light_direction);
-    let shadow_origin = hit_point + normal * lighting.shadow_bias;
+    let shadow_origin = hit_point + geometric_normal * lighting.shadow_bias;
     let light_visibility = if diffuse_angle > 0.0 {
         shadow_visibility(
             &shadow_origin,
             &light_direction,
             light_distance,
             accelerator,
+            ground,
         )
     } else {
         1.0
@@ -322,7 +388,6 @@ fn shade_surface(
         ) * light_visibility
     };
     let light_color = color_to_vec3(lighting.light.color);
-    let base_color = color_to_vec3(surface_color);
     let lit_color = Vec3::new(
         base_color.x * (lighting.ambient_intensity + diffuse * light_color.x)
             + specular * light_color.x,
@@ -351,17 +416,18 @@ fn transmission_tint(surface_color: Vec3) -> Vec3 {
     )
 }
 
-fn transmitted_ray_origin(hit_point: Vec3, ray_direction: Vec3) -> Vec3 {
-    hit_point + ray_direction * TRANSMISSION_BIAS
-}
-
-fn reflected_ray_origin(hit_point: Vec3, outward_normal: Vec3, reflected_direction: Vec3) -> Vec3 {
-    let bias_normal = if reflected_direction.dot(outward_normal) >= 0.0 {
-        outward_normal
+fn secondary_ray_origin(
+    hit_point: Vec3,
+    geometric_normal: Vec3,
+    direction: Vec3,
+    bias: f32,
+) -> Vec3 {
+    let bias_normal = if direction.dot(geometric_normal) >= 0.0 {
+        geometric_normal
     } else {
-        -outward_normal
+        -geometric_normal
     };
-    hit_point + bias_normal * REFLECTION_BIAS
+    hit_point + bias_normal * bias
 }
 
 fn transmission_direction(incident: Vec3, outward_normal: Vec3, ior: Option<f32>) -> Vec3 {
@@ -404,13 +470,16 @@ fn shadow_visibility(
     light_direction: &Vec3,
     light_distance: f32,
     accelerator: Accelerator<'_>,
+    ground: &GroundPlane,
 ) -> f32 {
     let mut visibility = 1.0;
     let mut origin = *shadow_origin;
     let mut remaining_distance = light_distance;
 
     for _ in 0..MAX_SHADOW_HITS {
-        let hit = accelerator.closest_hit(&origin, light_direction);
+        let hit = accelerator
+            .closest_hit_with_ground(&origin, light_direction, ground)
+            .intersection;
         if !hit.is_intersecting || hit.distance >= remaining_distance {
             break;
         }
@@ -482,7 +551,16 @@ mod tests {
     use raylib::prelude::Color;
 
     use super::*;
-    use crate::{camera::CameraConfig, light::PointLight, material::Material};
+    use crate::{
+        camera::CameraConfig,
+        ground::{GroundKind, GroundPlane},
+        light::PointLight,
+        material::Material,
+    };
+
+    fn distant_ground() -> GroundPlane {
+        GroundPlane::new(GroundKind::Solid, -1_000.0, Material::new(Color::WHITE))
+    }
 
     #[test]
     fn lambert_clamps_surfaces_facing_away_from_light() {
@@ -523,7 +601,8 @@ mod tests {
                 &origin,
                 &direction,
                 10.0,
-                Accelerator::Linear(&before_light)
+                Accelerator::Linear(&before_light),
+                &distant_ground()
             ),
             0.0
         );
@@ -532,7 +611,8 @@ mod tests {
                 &origin,
                 &direction,
                 10.0,
-                Accelerator::Linear(&behind_light)
+                Accelerator::Linear(&behind_light),
+                &distant_ground()
             ),
             1.0
         );
@@ -546,7 +626,13 @@ mod tests {
         let biased_origin = surface_point + normal * 0.001;
 
         assert_eq!(
-            shadow_visibility(&biased_origin, &normal, 10.0, Accelerator::Linear(&[cube])),
+            shadow_visibility(
+                &biased_origin,
+                &normal,
+                10.0,
+                Accelerator::Linear(&[cube]),
+                &distant_ground(),
+            ),
             1.0
         );
     }
@@ -604,12 +690,12 @@ mod tests {
     }
 
     #[test]
-    fn reflected_ray_origin_moves_to_output_side() {
+    fn secondary_ray_origin_uses_geometric_output_side() {
         let hit_point = Vec3::new(1.0, 2.0, 3.0);
         let normal = Vec3::new(0.0, 0.0, 1.0);
 
-        let outside = reflected_ray_origin(hit_point, normal, normal);
-        let inside = reflected_ray_origin(hit_point, normal, -normal);
+        let outside = secondary_ray_origin(hit_point, normal, normal, REFLECTION_BIAS);
+        let inside = secondary_ray_origin(hit_point, normal, -normal, REFLECTION_BIAS);
 
         assert!((outside.z - 3.001).abs() < 0.00001);
         assert!((inside.z - 2.999).abs() < 0.00001);
@@ -655,7 +741,7 @@ mod tests {
     fn transmitted_ray_keeps_direction_and_starts_after_surface() {
         let hit_point = Vec3::new(1.0, 2.0, 3.0);
         let direction = Vec3::new(0.0, 0.0, 1.0);
-        let origin = transmitted_ray_origin(hit_point, direction);
+        let origin = secondary_ray_origin(hit_point, direction, direction, TRANSMISSION_BIAS);
 
         assert!((origin.z - 3.001).abs() < 0.00001);
         assert_eq!((origin - hit_point).normalize(), direction);
@@ -683,10 +769,17 @@ mod tests {
             &direction,
             10.0,
             Accelerator::Linear(&transparent_cube),
+            &distant_ground(),
         );
         assert!(transparent_visibility > 0.0 && transparent_visibility < 1.0);
         assert_eq!(
-            shadow_visibility(&origin, &direction, 10.0, Accelerator::Linear(&opaque_cube)),
+            shadow_visibility(
+                &origin,
+                &direction,
+                10.0,
+                Accelerator::Linear(&opaque_cube),
+                &distant_ground(),
+            ),
             0.0
         );
     }
@@ -772,6 +865,7 @@ mod tests {
         };
         let mut single = Framebuffer::new(32, 18, Color::BLACK);
         let mut multi = Framebuffer::new(32, 18, Color::BLACK);
+        let ground = distant_ground();
 
         render(
             &mut single,
@@ -781,6 +875,7 @@ mod tests {
             &[],
             &lighting,
             SkyType::ClearDay,
+            &ground,
             RenderStrategy::BvhSingleThread,
         );
         render(
@@ -791,6 +886,7 @@ mod tests {
             &[],
             &lighting,
             SkyType::ClearDay,
+            &ground,
             RenderStrategy::BvhMultiThread,
         );
 

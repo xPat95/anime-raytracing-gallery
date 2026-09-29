@@ -34,6 +34,14 @@ impl Scene {
     pub fn primitives_before_culling(&self) -> usize {
         self.primitives.len() + self.culled_full_blocks
     }
+
+    pub fn rotate_y_180(&mut self) {
+        for primitive in &mut self.primitives {
+            primitive.rotate_y_180();
+        }
+        self.offset.x = -self.offset.x;
+        self.offset.z = -self.offset.z;
+    }
 }
 
 pub fn load(

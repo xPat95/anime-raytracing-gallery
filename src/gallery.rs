@@ -2,6 +2,7 @@ use raylib::prelude::Color;
 
 use crate::{
     camera::CameraConfig,
+    ground::{GroundConfig, GroundKind},
     light::{LightingConfig, PointLight},
     materials::{BlockGeometry, MaterialConfig, TextureConfig},
     sky::SkyType,
@@ -12,11 +13,13 @@ pub struct SceneConfig {
     pub id: &'static str,
     pub display_name: &'static str,
     pub scene_path: &'static str,
+    pub rotate_y_180: bool,
     pub textures: Vec<TextureConfig>,
     pub materials: Vec<MaterialConfig>,
     pub camera: CameraConfig,
     pub lighting: LightingConfig,
     pub sky: SkyType,
+    pub ground: GroundConfig,
 }
 
 pub fn available_scenes() -> Vec<SceneConfig> {
@@ -113,6 +116,7 @@ fn black_clover_skull() -> SceneConfig {
         id: "black_clover_skull",
         display_name: "Black Clover - Skull",
         scene_path: "assets/scenes/proyecto.scene",
+        rotate_y_180: false,
         textures,
         materials,
         camera: CameraConfig::from_position(
@@ -132,6 +136,7 @@ fn black_clover_skull() -> SceneConfig {
             phong_shininess: 32.0,
         },
         sky: SkyType::Sunset,
+        ground: solid_ground(-42.501, Color::new(43, 48, 52, 255), 0.72, 0.04, 0.01),
     }
 }
 
@@ -193,6 +198,7 @@ fn shenlong() -> SceneConfig {
         id: "shenlong",
         display_name: "Shenlong",
         scene_path: "assets/scenes/shenlong.scene",
+        rotate_y_180: false,
         textures,
         materials,
         camera: CameraConfig::from_position(
@@ -212,6 +218,7 @@ fn shenlong() -> SceneConfig {
             phong_shininess: 32.0,
         },
         sky: SkyType::Cloudy,
+        ground: solid_ground(-75.001, Color::new(74, 118, 62, 255), 0.78, 0.04, 0.01),
     }
 }
 
@@ -237,6 +244,7 @@ fn kurama() -> SceneConfig {
         id: "kurama",
         display_name: "Kurama",
         scene_path: "assets/scenes/kurama.scene",
+        rotate_y_180: false,
         textures,
         materials,
         camera: CameraConfig::from_position(
@@ -256,6 +264,7 @@ fn kurama() -> SceneConfig {
             phong_shininess: 32.0,
         },
         sky: SkyType::StarryNight,
+        ground: solid_ground(-85.001, Color::new(82, 84, 86, 255), 0.72, 0.06, 0.02),
     }
 }
 
@@ -279,6 +288,7 @@ fn pochita() -> SceneConfig {
         id: "pochita",
         display_name: "Pochita",
         scene_path: "assets/scenes/pochita.scene",
+        rotate_y_180: true,
         textures,
         materials,
         camera: CameraConfig::from_position(
@@ -298,6 +308,7 @@ fn pochita() -> SceneConfig {
             phong_shininess: 32.0,
         },
         sky: SkyType::ClearDay,
+        ground: solid_ground(-32.501, Color::new(92, 170, 70, 255), 0.88, 0.05, 0.015),
     }
 }
 
@@ -355,6 +366,7 @@ fn lapras() -> SceneConfig {
         id: "lapras",
         display_name: "Lapras",
         scene_path: "assets/scenes/lapras.scene",
+        rotate_y_180: false,
         textures,
         materials,
         camera: CameraConfig::from_position(
@@ -374,6 +386,16 @@ fn lapras() -> SceneConfig {
             phong_shininess: 32.0,
         },
         sky: SkyType::AuroraNight,
+        ground: GroundConfig {
+            kind: GroundKind::Water,
+            height: -30.0,
+            tint: Color::new(190, 232, 240, 255),
+            albedo: 0.18,
+            specular: 0.55,
+            transparency: 0.72,
+            reflectivity: 0.28,
+            ior: Some(1.33),
+        },
     }
 }
 
@@ -482,6 +504,25 @@ fn texture(id: &'static str, path: &'static str) -> TextureConfig {
     }
 }
 
+fn solid_ground(
+    height: f32,
+    tint: Color,
+    albedo: f32,
+    specular: f32,
+    reflectivity: f32,
+) -> GroundConfig {
+    GroundConfig {
+        kind: GroundKind::Solid,
+        height,
+        tint,
+        albedo,
+        specular,
+        transparency: 0.0,
+        reflectivity,
+        ior: None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn material(
     block_name: &'static str,
@@ -550,14 +591,42 @@ mod tests {
         assert_eq!(scenes[3].id, "pochita");
         assert_eq!(scenes[3].display_name, "Pochita");
         assert_eq!(scenes[3].scene_path, "assets/scenes/pochita.scene");
+        assert!(scenes[3].rotate_y_180);
         assert_eq!(scenes[4].id, "lapras");
         assert_eq!(scenes[4].display_name, "Lapras");
         assert_eq!(scenes[4].scene_path, "assets/scenes/lapras.scene");
+        assert!(
+            scenes
+                .iter()
+                .enumerate()
+                .all(|(index, scene)| scene.rotate_y_180 == (index == 3))
+        );
         assert_eq!(scenes[0].sky, SkyType::Sunset);
         assert_eq!(scenes[1].sky, SkyType::Cloudy);
         assert_eq!(scenes[2].sky, SkyType::StarryNight);
         assert_eq!(scenes[3].sky, SkyType::ClearDay);
         assert_eq!(scenes[4].sky, SkyType::AuroraNight);
+        assert_eq!(scenes[0].ground.kind, GroundKind::Solid);
+        assert_eq!(scenes[0].ground.height, -42.501);
+        assert_eq!(scenes[1].ground.kind, GroundKind::Solid);
+        assert_eq!(scenes[1].ground.height, -75.001);
+        assert_eq!(scenes[2].ground.height, -85.001);
+        assert_eq!(scenes[3].ground.height, -32.501);
+        assert!(scenes[0].ground.tint.r < scenes[2].ground.tint.r);
+        assert!(scenes[0].ground.tint.g < scenes[2].ground.tint.g);
+        assert!(scenes[1].ground.tint.g > scenes[1].ground.tint.r);
+        assert!(scenes[3].ground.tint.g > scenes[1].ground.tint.g);
+        assert!(scenes[..4].iter().all(|scene| {
+            scene
+                .textures
+                .iter()
+                .all(|texture| texture.id != "deepslate" && texture.id != "grass_block_top")
+        }));
+        assert_eq!(scenes[4].ground.kind, GroundKind::Water);
+        assert_eq!(scenes[4].ground.height, -30.0);
+        assert!(scenes[4].ground.transparency > 0.0);
+        assert!(scenes[4].ground.reflectivity > 0.0);
+        assert_eq!(scenes[4].ground.ior, Some(1.33));
     }
 
     #[test]

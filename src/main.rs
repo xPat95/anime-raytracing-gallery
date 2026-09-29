@@ -4,6 +4,7 @@ mod camera;
 mod cube;
 mod framebuffer;
 mod gallery;
+mod ground;
 mod intersect;
 mod light;
 mod material;
@@ -25,6 +26,7 @@ use bvh::Bvh;
 use camera::Camera;
 use framebuffer::Framebuffer;
 use gallery::SceneConfig;
+use ground::GroundPlane;
 use light::LightingConfig;
 use materials::MaterialCatalog;
 use raylib::prelude::*;
@@ -92,6 +94,7 @@ struct ActiveScene {
     camera: Camera,
     lighting: LightingConfig,
     sky: SkyType,
+    ground: GroundPlane,
     textures: Vec<Texture>,
     framebuffer: Framebuffer,
     display_texture: Texture2D,
@@ -112,13 +115,14 @@ impl ActiveScene {
         let lighting = config.lighting;
         let sky = config.sky;
         let (materials, textures) = MaterialCatalog::load(&config.textures, &config.materials)?;
+        let ground = GroundPlane::from_config(config.ground)?;
         let resolution = target_resolution(
             raylib.get_screen_width(),
             raylib.get_screen_height(),
             QualityLevel::Final,
         );
         let (scene, bvh, framebuffer) = load_and_render_scene(
-            &config, mode, &camera, &lighting, &materials, &textures, resolution,
+            &config, mode, &camera, &lighting, &materials, &textures, &ground, resolution,
         )?;
         let image = framebuffer.to_image();
         let display_texture = raylib
@@ -132,6 +136,7 @@ impl ActiveScene {
             camera,
             lighting,
             sky,
+            ground,
             textures,
             framebuffer,
             display_texture,
@@ -200,6 +205,7 @@ impl ActiveScene {
                 &self.textures,
                 &self.lighting,
                 self.sky,
+                &self.ground,
                 RenderStrategy::BvhMultiThread,
                 label,
                 desired_resolution,
@@ -341,11 +347,12 @@ fn load_and_render_scene(
     lighting: &LightingConfig,
     materials: &MaterialCatalog,
     textures: &[Texture],
+    ground: &GroundPlane,
     resolution: RenderResolution,
 ) -> Result<(scene::Scene, Bvh, Framebuffer), String> {
     if matches!(mode, RunMode::Compare) {
-        let full = scene::load(config.scene_path, |name| materials.for_block(name), false)?;
-        let optimized = scene::load(config.scene_path, |name| materials.for_block(name), true)?;
+        let full = load_configured_scene(config, materials, false)?;
+        let optimized = load_configured_scene(config, materials, true)?;
         print_scene_metrics(&optimized);
         let full_bvh = build_bvh(&full.primitives);
         let optimized_bvh = build_bvh(&optimized.primitives);
@@ -357,6 +364,7 @@ fn load_and_render_scene(
             textures,
             lighting,
             config.sky,
+            ground,
             RenderStrategy::BvhMultiThread,
             "full scene",
             resolution,
@@ -368,6 +376,7 @@ fn load_and_render_scene(
             textures,
             lighting,
             config.sky,
+            ground,
             RenderStrategy::BvhMultiThread,
             "optimized scene",
             resolution,
@@ -377,11 +386,7 @@ fn load_and_render_scene(
         return Ok((optimized, optimized_bvh, frame));
     }
 
-    let scene = scene::load(
-        config.scene_path,
-        |name| materials.for_block(name),
-        !matches!(mode, RunMode::Full),
-    )?;
+    let scene = load_configured_scene(config, materials, !matches!(mode, RunMode::Full))?;
     print_scene_metrics(&scene);
     let bvh = build_bvh(&scene.primitives);
     print_bvh_metrics(&bvh);
@@ -393,6 +398,7 @@ fn load_and_render_scene(
             textures,
             lighting,
             config.sky,
+            ground,
             RenderStrategy::LinearSingleThread,
             "linear single-thread",
             resolution,
@@ -404,6 +410,7 @@ fn load_and_render_scene(
             textures,
             lighting,
             config.sky,
+            ground,
             RenderStrategy::BvhSingleThread,
             "BVH single-thread",
             resolution,
@@ -416,6 +423,7 @@ fn load_and_render_scene(
             textures,
             lighting,
             config.sky,
+            ground,
             RenderStrategy::BvhMultiThread,
             "BVH multi-thread",
             resolution,
@@ -438,12 +446,29 @@ fn load_and_render_scene(
         textures,
         lighting,
         config.sky,
+        ground,
         RenderStrategy::BvhMultiThread,
         label,
         resolution,
     )
     .0;
     Ok((scene, bvh, frame))
+}
+
+fn load_configured_scene(
+    config: &SceneConfig,
+    materials: &MaterialCatalog,
+    cull_fully_enclosed: bool,
+) -> Result<scene::Scene, String> {
+    let mut scene = scene::load(
+        config.scene_path,
+        |name| materials.for_block(name),
+        cull_fully_enclosed,
+    )?;
+    if config.rotate_y_180 {
+        scene.rotate_y_180();
+    }
+    Ok(scene)
 }
 
 fn print_camera_state(camera: &Camera) {
@@ -546,6 +571,7 @@ fn render_scene_at(
     textures: &[Texture],
     lighting: &LightingConfig,
     sky: SkyType,
+    ground: &GroundPlane,
     strategy: RenderStrategy,
     label: &str,
     resolution: RenderResolution,
@@ -566,6 +592,7 @@ fn render_scene_at(
         textures,
         lighting,
         sky,
+        ground,
         strategy,
     );
     let elapsed = started.elapsed();

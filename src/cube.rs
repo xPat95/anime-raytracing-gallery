@@ -79,6 +79,13 @@ impl Cube {
     pub(crate) fn centroid(&self) -> Vec3 {
         (self.min + self.max) * 0.5
     }
+
+    pub(crate) fn rotate_y_180(&mut self) {
+        (self.min.x, self.max.x) = (-self.max.x, -self.min.x);
+        (self.min.z, self.max.z) = (-self.max.z, -self.min.z);
+        (self.uv_min.x, self.uv_max.x) = (-self.uv_max.x, -self.uv_min.x);
+        (self.uv_min.z, self.uv_max.z) = (-self.uv_max.z, -self.uv_min.z);
+    }
 }
 
 impl RayIntersect for Cube {
@@ -200,5 +207,19 @@ mod tests {
         let hit = cube.ray_intersect(&Vec3::new(0.75, 0.75, 3.0), &Vec3::new(0.0, 0.0, -1.0));
 
         assert_eq!((hit.u, hit.v), (1.75, 0.25));
+    }
+
+    #[test]
+    fn rotating_around_y_preserves_size_and_flips_xz_center() {
+        let mut cube =
+            Cube::from_center_size(Vec3::new(3.0, 4.0, -5.0), 2.0, Material::new(Color::WHITE));
+
+        cube.rotate_y_180();
+
+        assert_eq!(cube.centroid(), Vec3::new(-3.0, 4.0, 5.0));
+        assert_eq!(
+            cube.bounds(),
+            (Vec3::new(-4.0, 3.0, 4.0), Vec3::new(-2.0, 5.0, 6.0))
+        );
     }
 }
