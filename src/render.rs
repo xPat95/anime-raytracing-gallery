@@ -11,6 +11,8 @@ const BACKGROUND: Color = Color::new(18, 22, 30, 255);
 const MAX_RAY_DEPTH: u32 = 8;
 const MAX_SHADOW_HITS: u32 = 16;
 const TRANSMISSION_BIAS: f32 = 0.001;
+const REFLECTION_BIAS: f32 = 0.001;
+const MIN_RAY_CONTRIBUTION: f32 = 0.001;
 
 #[derive(Clone, Copy, Debug)]
 pub enum RenderStrategy {
@@ -164,6 +166,7 @@ fn render_rows(
                 textures,
                 lighting,
                 0,
+                1.0,
             );
             pixels.push(vec3_to_color(color));
         }
@@ -192,10 +195,11 @@ fn trace_ray(
     textures: &[Texture],
     lighting: &LightingConfig,
     depth: u32,
+    contribution: f32,
 ) -> Vec3 {
     let hit = accelerator.closest_hit(ray_origin, ray_direction);
     if !hit.is_intersecting {
-        return color_to_vec3(BACKGROUND);
+        return background_color(*ray_direction);
     }
 
     let (surface, tint) = shade_surface(
@@ -206,28 +210,59 @@ fn trace_ray(
         textures,
         lighting,
     );
+    let hit_point = *ray_origin + *ray_direction * hit.distance;
+    let normal = hit.normal.normalize();
     let transparency = hit.material.transparency.clamp(0.0, 1.0);
-    if !can_transmit(transparency, depth) {
-        return surface;
+    let reflectivity = hit.material.reflectivity.clamp(0.0, 1.0);
+    let transmission_weight = (1.0 - reflectivity) * transparency;
+    let transmission_blend = if can_transmit(transparency, depth)
+        && is_significant(contribution * transmission_weight)
+    {
+        let transmitted_direction =
+            transmission_direction(*ray_direction, normal, hit.material.ior);
+        let transmitted_origin = transmitted_ray_origin(hit_point, transmitted_direction);
+        let transmitted = trace_ray(
+            &transmitted_origin,
+            &transmitted_direction,
+            accelerator,
+            textures,
+            lighting,
+            depth + 1,
+            contribution * transmission_weight,
+        );
+        blend_transparency(surface, transmitted, tint, transparency)
+    } else {
+        surface
+    };
+
+    if !can_reflect(reflectivity, depth) || !is_significant(contribution * reflectivity) {
+        return transmission_blend;
     }
 
-    let hit_point = *ray_origin + *ray_direction * hit.distance;
-    let transmitted_direction =
-        transmission_direction(*ray_direction, hit.normal.normalize(), hit.material.ior);
-    let transmitted_origin = transmitted_ray_origin(hit_point, transmitted_direction);
-    let transmitted = trace_ray(
-        &transmitted_origin,
-        &transmitted_direction,
+    let reflected_direction = reflect(*ray_direction, normal).normalize();
+    let reflected_origin = reflected_ray_origin(hit_point, normal, reflected_direction);
+    let reflected = trace_ray(
+        &reflected_origin,
+        &reflected_direction,
         accelerator,
         textures,
         lighting,
         depth + 1,
+        contribution * reflectivity,
     );
-    blend_transparency(surface, transmitted, tint, transparency)
+    blend_reflection(transmission_blend, reflected, reflectivity)
 }
 
 fn can_transmit(transparency: f32, depth: u32) -> bool {
     transparency > 0.0 && depth < MAX_RAY_DEPTH
+}
+
+fn can_reflect(reflectivity: f32, depth: u32) -> bool {
+    reflectivity > 0.0 && depth < MAX_RAY_DEPTH
+}
+
+fn is_significant(contribution: f32) -> bool {
+    contribution >= MIN_RAY_CONTRIBUTION
 }
 
 fn shade_surface(
@@ -294,6 +329,10 @@ fn blend_transparency(surface: Vec3, transmitted: Vec3, tint: Vec3, transparency
     surface * (1.0 - transparency) + component_multiply(transmitted, tint) * transparency
 }
 
+fn blend_reflection(base: Vec3, reflected: Vec3, reflectivity: f32) -> Vec3 {
+    base * (1.0 - reflectivity) + reflected * reflectivity
+}
+
 fn transmission_tint(surface_color: Vec3) -> Vec3 {
     Vec3::new(
         0.6 + surface_color.x * 0.4,
@@ -304,6 +343,15 @@ fn transmission_tint(surface_color: Vec3) -> Vec3 {
 
 fn transmitted_ray_origin(hit_point: Vec3, ray_direction: Vec3) -> Vec3 {
     hit_point + ray_direction * TRANSMISSION_BIAS
+}
+
+fn reflected_ray_origin(hit_point: Vec3, outward_normal: Vec3, reflected_direction: Vec3) -> Vec3 {
+    let bias_normal = if reflected_direction.dot(outward_normal) >= 0.0 {
+        outward_normal
+    } else {
+        -outward_normal
+    };
+    hit_point + bias_normal * REFLECTION_BIAS
 }
 
 fn transmission_direction(incident: Vec3, outward_normal: Vec3, ior: Option<f32>) -> Vec3 {
@@ -335,6 +383,10 @@ fn refract(incident: Vec3, oriented_normal: Vec3, eta_ratio: f32) -> Option<Vec3
 
 fn reflect(incident: Vec3, normal: Vec3) -> Vec3 {
     incident - normal * (2.0 * incident.dot(normal))
+}
+
+fn background_color(_ray_direction: Vec3) -> Vec3 {
+    color_to_vec3(BACKGROUND)
 }
 
 fn shadow_visibility(
@@ -507,6 +559,76 @@ mod tests {
             blend_transparency(surface, transmitted, neutral_tint, 0.5),
             Vec3::new(0.5, 0.0, 0.5)
         );
+    }
+
+    #[test]
+    fn reflection_blend_respects_zero_full_and_intermediate_values() {
+        let base = Vec3::new(1.0, 0.0, 0.0);
+        let reflected = Vec3::new(0.0, 0.0, 1.0);
+
+        assert_eq!(blend_reflection(base, reflected, 0.0), base);
+        assert_eq!(blend_reflection(base, reflected, 1.0), reflected);
+        assert_eq!(
+            blend_reflection(base, reflected, 0.25),
+            Vec3::new(0.75, 0.0, 0.25)
+        );
+    }
+
+    #[test]
+    fn perpendicular_reflection_reverses_direction() {
+        let incident = Vec3::new(0.0, 0.0, -1.0);
+        let reflected = reflect(incident, Vec3::new(0.0, 0.0, 1.0));
+
+        assert_eq!(reflected, Vec3::new(0.0, 0.0, 1.0));
+        assert!((reflected.length() - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn forty_five_degree_reflection_preserves_angle() {
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+        let incident = Vec3::new(1.0, 0.0, -1.0).normalize();
+        let reflected = reflect(incident, normal).normalize();
+
+        assert!(((-incident).dot(normal) - reflected.dot(normal)).abs() < 0.0001);
+        assert!((reflected.length() - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn reflected_ray_origin_moves_to_output_side() {
+        let hit_point = Vec3::new(1.0, 2.0, 3.0);
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+
+        let outside = reflected_ray_origin(hit_point, normal, normal);
+        let inside = reflected_ray_origin(hit_point, normal, -normal);
+
+        assert!((outside.z - 3.001).abs() < 0.00001);
+        assert!((inside.z - 2.999).abs() < 0.00001);
+    }
+
+    #[test]
+    fn reflection_and_transmission_share_maximum_depth() {
+        assert!(can_reflect(0.5, MAX_RAY_DEPTH - 1));
+        assert!(!can_reflect(0.5, MAX_RAY_DEPTH));
+        assert!(!can_reflect(0.0, 0));
+        assert!(!can_transmit(0.5, MAX_RAY_DEPTH));
+    }
+
+    #[test]
+    fn negligible_secondary_contributions_are_skipped() {
+        assert!(is_significant(MIN_RAY_CONTRIBUTION));
+        assert!(!is_significant(MIN_RAY_CONTRIBUTION * 0.5));
+    }
+
+    #[test]
+    fn refractive_material_can_also_be_reflective() {
+        let mut material = Material::new(Color::WHITE);
+        material.transparency = 0.35;
+        material.reflectivity = 0.12;
+        material.ior = Some(1.5);
+
+        assert!(can_transmit(material.transparency, 0));
+        assert!(can_reflect(material.reflectivity, 0));
+        assert_eq!(material.ior, Some(1.5));
     }
 
     #[test]
