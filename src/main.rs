@@ -36,7 +36,9 @@ use raylib::prelude::*;
 use render::RenderStrategy;
 use sky::SkyType;
 use texture::Texture;
-use ui::{AppState, AudioUiState, GalleryLayout, GalleryState, UiAssets};
+use ui::{
+    AppState, AudioUiState, GalleryLayout, GalleryState, UiAssets, UiTransition, UiTransitionKind,
+};
 
 const INITIAL_WINDOW_WIDTH: i32 = 1280;
 const INITIAL_WINDOW_HEIGHT: i32 = 720;
@@ -272,7 +274,12 @@ fn main() -> Result<(), String> {
 
     // Start streamed audio only after blocking startup asset and scene work is complete.
     let audio_device = match RaylibAudio::init_audio_device() {
-        Ok(audio) => Some(audio),
+        Ok(audio) => {
+            // Animated ray-traced frames can block the main loop for over 100 ms.
+            // Give streamed music enough decoded audio to bridge those renders.
+            audio.set_audio_stream_buffer_size_default(65_536);
+            Some(audio)
+        }
         Err(error) => {
             eprintln!("Audio device unavailable: {error}");
             None
@@ -288,83 +295,142 @@ fn main() -> Result<(), String> {
 
     let mut cover_bounds = Rectangle::default();
     let mut gallery_layout = GalleryLayout::default();
+    let mut transition: Option<UiTransition> = None;
+    let mut transition_switched = false;
     println!("Scene controls: LMB/WASD orbit, RMB/arrows pan, wheel zoom, R reset");
 
     while !raylib.window_should_close() {
+        let frame_time = raylib.get_frame_time();
         if let Some(audio) = audio_manager.as_mut() {
-            audio.update(raylib.get_frame_time());
+            audio.update(frame_time);
         }
         let mouse = raylib.get_mouse_position();
         let left_pressed = raylib.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT);
-        match app_state {
-            AppState::Cover => {
-                if left_pressed && ui::contains(cover_bounds, mouse) {
-                    app_state = AppState::Gallery;
+
+        if let Some(active_transition) = transition.as_mut() {
+            active_transition.update(frame_time);
+            if active_transition.midpoint_reached() && !transition_switched {
+                match active_transition.kind {
+                    UiTransitionKind::PageTurnForward => {
+                        gallery_state.next();
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.select_scene(gallery_state.current_entry().scene_id);
+                        }
+                    }
+                    UiTransitionKind::PageTurnBackward => {
+                        gallery_state.previous();
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.select_scene(gallery_state.current_entry().scene_id);
+                        }
+                    }
+                    UiTransitionKind::FadeToScene => {
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.update(0.0);
+                        }
+                        active_scene = Some(ActiveScene::load(
+                            find_scene(gallery_state.current_entry().scene_id)?,
+                            RunMode::Optimized,
+                            &mut raylib,
+                            &thread,
+                        )?);
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.update(0.0);
+                        }
+                        app_state = AppState::Scene;
+                    }
+                    UiTransitionKind::FadeToGallery => {
+                        active_scene = None;
+                        app_state = AppState::Gallery;
+                    }
+                    UiTransitionKind::OpeningBook | UiTransitionKind::ClosingBook => {}
                 }
+                transition_switched = true;
             }
-            AppState::Gallery => {
-                if raylib.is_key_pressed(KeyboardKey::KEY_LEFT)
-                    || (left_pressed && ui::contains(gallery_layout.previous_button, mouse))
-                {
-                    gallery_state.previous();
-                    if let Some(audio) = audio_manager.as_mut() {
-                        audio.select_scene(gallery_state.current_entry().scene_id);
-                    }
+            if active_transition.finished() {
+                if active_transition.kind == UiTransitionKind::ClosingBook {
+                    app_state = AppState::Cover;
                 }
-                if raylib.is_key_pressed(KeyboardKey::KEY_RIGHT)
-                    || (left_pressed && ui::contains(gallery_layout.next_button, mouse))
-                {
-                    gallery_state.next();
-                    if let Some(audio) = audio_manager.as_mut() {
-                        audio.select_scene(gallery_state.current_entry().scene_id);
-                    }
-                }
-                if left_pressed && ui::contains(gallery_layout.audio_button, mouse) {
-                    if let Some(audio) = audio_manager.as_mut() {
-                        audio.toggle_intro();
-                    }
-                }
-                if left_pressed && ui::contains(gallery_layout.audio_progress, mouse) {
-                    let progress = (mouse.x - gallery_layout.audio_progress.x)
-                        / gallery_layout.audio_progress.width;
-                    if let Some(audio) = audio_manager.as_mut() {
-                        audio.seek(progress);
-                    }
-                }
-                if left_pressed && ui::contains(gallery_layout.preview_button, mouse) {
-                    if let Some(audio) = audio_manager.as_mut() {
-                        audio.cancel_intro_and_resume_background();
-                    }
-                    active_scene = Some(ActiveScene::load(
-                        find_scene(gallery_state.current_entry().scene_id)?,
-                        RunMode::Optimized,
-                        &mut raylib,
-                        &thread,
-                    )?);
-                    if let Some(audio) = audio_manager.as_mut() {
-                        audio.update(0.0);
-                    }
-                    app_state = AppState::Scene;
-                }
+                transition = None;
+                transition_switched = false;
             }
-            AppState::Scene => {
-                let button = ui::book_button(raylib.get_screen_width(), raylib.get_screen_height());
-                let audio_button = ui::scene_audio_button(button);
-                let consumes_mouse = (ui::contains(button, mouse)
-                    || ui::contains(audio_button, mouse))
-                    && raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT);
-                if left_pressed && ui::contains(button, mouse) {
-                    if let Some(audio) = audio_manager.as_mut() {
-                        audio.cancel_intro_and_resume_background();
+        }
+
+        if transition.is_none() {
+            match app_state {
+                AppState::Cover => {
+                    if left_pressed && ui::contains(cover_bounds, mouse) {
+                        app_state = AppState::Gallery;
+                        transition = Some(UiTransition::new(UiTransitionKind::OpeningBook));
                     }
-                    active_scene = None;
-                    app_state = AppState::Gallery;
-                } else if left_pressed && ui::contains(audio_button, mouse) {
-                    if let Some(audio) = audio_manager.as_mut() {
-                        audio.toggle_intro();
+                }
+                AppState::Gallery => {
+                    if gallery_state.can_previous()
+                        && (raylib.is_key_pressed(KeyboardKey::KEY_LEFT)
+                            || (left_pressed
+                                && ui::contains(gallery_layout.previous_button, mouse)))
+                    {
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.cancel_intro_and_resume_background();
+                        }
+                        transition = Some(UiTransition::new(UiTransitionKind::PageTurnBackward));
+                    } else if gallery_state.can_next()
+                        && (raylib.is_key_pressed(KeyboardKey::KEY_RIGHT)
+                            || (left_pressed && ui::contains(gallery_layout.next_button, mouse)))
+                    {
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.cancel_intro_and_resume_background();
+                        }
+                        transition = Some(UiTransition::new(UiTransitionKind::PageTurnForward));
+                    } else if left_pressed && ui::contains(gallery_layout.close_button, mouse) {
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.cancel_intro_and_resume_background();
+                        }
+                        transition = Some(UiTransition::new(UiTransitionKind::ClosingBook));
                     }
-                } else if let Some(scene) = active_scene.as_mut() {
-                    scene.update_input(&mut raylib, &thread, consumes_mouse)?;
+                    if left_pressed && ui::contains(gallery_layout.audio_button, mouse) {
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.toggle_intro();
+                        }
+                    }
+                    if left_pressed && ui::contains(gallery_layout.audio_progress, mouse) {
+                        let progress = (mouse.x - gallery_layout.audio_progress.x)
+                            / gallery_layout.audio_progress.width;
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.seek(progress);
+                        }
+                    }
+                    if left_pressed && ui::contains(gallery_layout.preview_button, mouse) {
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.cancel_intro_and_resume_background();
+                        }
+                        transition = Some(UiTransition::new(UiTransitionKind::FadeToScene));
+                    }
+                }
+                AppState::Scene => {
+                    let button =
+                        ui::book_button(raylib.get_screen_width(), raylib.get_screen_height());
+                    let audio_button = ui::scene_audio_button(button);
+                    let consumes_mouse = (ui::contains(button, mouse)
+                        || ui::contains(audio_button, mouse))
+                        && raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT);
+                    if left_pressed && ui::contains(button, mouse) {
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.cancel_intro_and_resume_background();
+                        }
+                        transition = Some(UiTransition::new(UiTransitionKind::FadeToGallery));
+                    } else if left_pressed && ui::contains(audio_button, mouse) {
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.toggle_intro();
+                        }
+                    } else if let Some(scene) = active_scene.as_mut() {
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.update(0.0);
+                        }
+                        scene.update_input(&mut raylib, &thread, consumes_mouse)?;
+                        if let Some(audio) = audio_manager.as_mut() {
+                            audio.update(0.0);
+                        }
+                    }
                 }
             }
         }
@@ -394,6 +460,7 @@ fn main() -> Result<(), String> {
                     &gallery_state,
                     selected_name,
                     audio_status,
+                    mouse,
                 );
             }
             AppState::Scene => {
@@ -425,6 +492,25 @@ fn main() -> Result<(), String> {
                     ui::contains(ui::scene_audio_button(book_button), mouse),
                     audio_status,
                 );
+            }
+        }
+        if let Some(active_transition) = transition {
+            match active_transition.kind {
+                UiTransitionKind::PageTurnForward => {
+                    ui::draw_page_turn(&mut drawing, true, active_transition.progress())
+                }
+                UiTransitionKind::PageTurnBackward => {
+                    ui::draw_page_turn(&mut drawing, false, active_transition.progress())
+                }
+                UiTransitionKind::OpeningBook => {
+                    ui::draw_book_transition(&mut drawing, active_transition.progress())
+                }
+                UiTransitionKind::ClosingBook => {
+                    ui::draw_book_transition(&mut drawing, 1.0 - active_transition.progress())
+                }
+                UiTransitionKind::FadeToScene | UiTransitionKind::FadeToGallery => {
+                    ui::draw_fade(&mut drawing, active_transition.progress())
+                }
             }
         }
     }

@@ -35,6 +35,55 @@ pub enum AppState {
     Scene,
 }
 
+pub const PAGE_TURN_SECONDS: f32 = 0.38;
+pub const BOOK_TRANSITION_SECONDS: f32 = 0.42;
+pub const FADE_HALF_SECONDS: f32 = 0.25;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiTransitionKind {
+    OpeningBook,
+    ClosingBook,
+    PageTurnForward,
+    PageTurnBackward,
+    FadeToScene,
+    FadeToGallery,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct UiTransition {
+    pub kind: UiTransitionKind,
+    elapsed: f32,
+}
+
+impl UiTransition {
+    pub fn new(kind: UiTransitionKind) -> Self {
+        Self { kind, elapsed: 0.0 }
+    }
+    pub fn update(&mut self, delta: f32) {
+        self.elapsed += delta.max(0.0);
+    }
+    pub fn progress(&self) -> f32 {
+        let duration = match self.kind {
+            UiTransitionKind::OpeningBook | UiTransitionKind::ClosingBook => {
+                BOOK_TRANSITION_SECONDS
+            }
+            UiTransitionKind::PageTurnForward | UiTransitionKind::PageTurnBackward => {
+                PAGE_TURN_SECONDS
+            }
+            UiTransitionKind::FadeToScene | UiTransitionKind::FadeToGallery => {
+                FADE_HALF_SECONDS * 2.0
+            }
+        };
+        (self.elapsed / duration).clamp(0.0, 1.0)
+    }
+    pub fn midpoint_reached(&self) -> bool {
+        self.progress() >= 0.5
+    }
+    pub fn finished(&self) -> bool {
+        self.progress() >= 1.0
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct GalleryEntry {
     pub scene_id: &'static str,
@@ -75,6 +124,14 @@ impl GalleryState {
 
     pub fn previous(&mut self) {
         self.current_page = self.current_page.saturating_sub(1);
+    }
+
+    pub fn can_previous(&self) -> bool {
+        self.current_page > 0
+    }
+
+    pub fn can_next(&self) -> bool {
+        self.current_page + 1 < GALLERY_ENTRIES.len()
     }
 
     pub fn next(&mut self) {
@@ -120,6 +177,7 @@ pub struct GalleryLayout {
     pub preview_button: Rectangle,
     pub audio_button: Rectangle,
     pub audio_progress: Rectangle,
+    pub close_button: Rectangle,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -192,6 +250,7 @@ pub fn draw_gallery(
     gallery: &GalleryState,
     display_name: &str,
     audio: AudioUiState,
+    mouse: Vector2,
 ) -> GalleryLayout {
     let screen_width = drawing.get_screen_width() as f32;
     let screen_height = drawing.get_screen_height() as f32;
@@ -224,6 +283,8 @@ pub fn draw_gallery(
         (book.height - 16.0) as i32,
         Color::new(105, 67, 43, 255),
     );
+    let close_button = Rectangle::new(book.x + book.width - 48.0, book.y + 20.0, 28.0, 28.0);
+    draw_close_button(drawing, close_button, contains(close_button, mouse));
 
     let compact = book.height < 520.0;
     let title_size = if compact { 24 } else { 32 };
@@ -289,12 +350,19 @@ pub fn draw_gallery(
         button_size,
         button_size,
     );
-    draw_arrow_button(drawing, previous_button, false, gallery.current_page() > 0);
+    draw_arrow_button(
+        drawing,
+        previous_button,
+        false,
+        gallery.can_previous(),
+        contains(previous_button, mouse),
+    );
     draw_arrow_button(
         drawing,
         next_button,
         true,
-        gallery.current_page() + 1 < GALLERY_ENTRIES.len(),
+        gallery.can_next(),
+        contains(next_button, mouse),
     );
     draw_centered_text(
         drawing,
@@ -315,7 +383,94 @@ pub fn draw_gallery(
         preview_button,
         audio_button,
         audio_progress,
+        close_button,
     }
+}
+
+pub fn draw_page_turn(drawing: &mut RaylibDrawHandle<'_>, forward: bool, progress: f32) {
+    let screen_width = drawing.get_screen_width() as f32;
+    let screen_height = drawing.get_screen_height() as f32;
+    let height = (screen_height * 0.78)
+        .min(screen_width * 0.88 * 0.58)
+        .max(390.0);
+    let width = (screen_width * 0.88).min(1260.0).min(height * 1.75);
+    let book = Rectangle::new(
+        (screen_width - width) * 0.5,
+        (screen_height - height) * 0.5,
+        width,
+        height,
+    );
+    let half = width * 0.5;
+    let fold = (1.0 - (progress * 2.0 - 1.0).abs()).clamp(0.0, 1.0);
+    let page_width = half * (1.0 - progress).max(0.04);
+    let x = if forward {
+        book.x + half
+    } else {
+        book.x + half - page_width
+    };
+    drawing.draw_rectangle_rec(
+        Rectangle::new(x, book.y + 11.0, page_width, book.height - 22.0),
+        Color::new(222, 202, 157, 255),
+    );
+    drawing.draw_rectangle_rec(
+        Rectangle::new(
+            book.x + half - 10.0 * fold,
+            book.y + 11.0,
+            20.0 * fold,
+            book.height - 22.0,
+        ),
+        Color::new(65, 42, 29, (150.0 * fold) as u8),
+    );
+}
+
+pub fn draw_book_transition(drawing: &mut RaylibDrawHandle<'_>, openness: f32) {
+    let width = drawing.get_screen_width() as f32;
+    let height = drawing.get_screen_height() as f32;
+    let panel = width * 0.5 * (1.0 - openness.clamp(0.0, 1.0));
+    let color = Color::new(91, 49, 32, 255);
+    drawing.draw_rectangle_rec(Rectangle::new(0.0, 0.0, panel, height), color);
+    drawing.draw_rectangle_rec(Rectangle::new(width - panel, 0.0, panel, height), color);
+}
+
+pub fn draw_fade(drawing: &mut RaylibDrawHandle<'_>, progress: f32) {
+    let alpha = if progress < 0.5 {
+        progress * 2.0
+    } else {
+        (1.0 - progress) * 2.0
+    };
+    drawing.draw_rectangle(
+        0,
+        0,
+        drawing.get_screen_width(),
+        drawing.get_screen_height(),
+        Color::new(0, 0, 0, (alpha.clamp(0.0, 1.0) * 255.0) as u8),
+    );
+}
+
+fn draw_close_button(drawing: &mut RaylibDrawHandle<'_>, bounds: Rectangle, hovered: bool) {
+    if hovered {
+        drawing.draw_rectangle_rec(bounds, Color::new(105, 67, 43, 70));
+    }
+    let color = if hovered {
+        Color::new(116, 63, 38, 255)
+    } else {
+        Color::new(76, 48, 29, 255)
+    };
+    drawing.draw_line_ex(
+        Vector2::new(bounds.x + 7.0, bounds.y + 7.0),
+        Vector2::new(
+            bounds.x + bounds.width - 7.0,
+            bounds.y + bounds.height - 7.0,
+        ),
+        3.0,
+        color,
+    );
+    drawing.draw_line_ex(
+        Vector2::new(bounds.x + bounds.width - 7.0, bounds.y + 7.0),
+        Vector2::new(bounds.x + 7.0, bounds.y + bounds.height - 7.0),
+        3.0,
+        color,
+    );
 }
 
 pub fn book_button(screen_width: i32, screen_height: i32) -> Rectangle {
@@ -482,7 +637,11 @@ fn draw_arrow_button(
     bounds: Rectangle,
     points_right: bool,
     enabled: bool,
+    hovered: bool,
 ) {
+    if enabled && hovered {
+        drawing.draw_rectangle_rec(bounds, Color::new(105, 67, 43, 45));
+    }
     let color = if enabled {
         Color::new(76, 48, 29, 255)
     } else {
@@ -493,12 +652,14 @@ fn draw_arrow_button(
         bounds.y + bounds.height * 0.5,
     );
     let direction = if points_right { 1.0 } else { -1.0 };
-    drawing.draw_triangle(
-        Vector2::new(center.x + direction * 12.0, center.y),
-        Vector2::new(center.x - direction * 8.0, center.y - 13.0),
-        Vector2::new(center.x - direction * 8.0, center.y + 13.0),
-        color,
-    );
+    let tip = Vector2::new(center.x + direction * 12.0, center.y);
+    let top = Vector2::new(center.x - direction * 8.0, center.y - 13.0);
+    let bottom = Vector2::new(center.x - direction * 8.0, center.y + 13.0);
+    if points_right {
+        drawing.draw_triangle(tip, top, bottom, color);
+    } else {
+        drawing.draw_triangle(tip, bottom, top, color);
+    }
 }
 
 fn draw_texture_contained(
@@ -589,5 +750,28 @@ mod tests {
             gallery.previous();
         }
         assert_eq!(gallery.current_page(), 0);
+    }
+
+    #[test]
+    fn transitions_report_midpoint_and_completion() {
+        let mut transition = UiTransition::new(UiTransitionKind::PageTurnForward);
+        assert!(!transition.midpoint_reached());
+        transition.update(PAGE_TURN_SECONDS * 0.5);
+        assert!(transition.midpoint_reached());
+        assert!(!transition.finished());
+        transition.update(PAGE_TURN_SECONDS * 0.5);
+        assert!(transition.finished());
+    }
+
+    #[test]
+    fn navigation_exposes_available_directions() {
+        let mut gallery = GalleryState::new();
+        assert!(!gallery.can_previous());
+        assert!(gallery.can_next());
+        for _ in 1..GALLERY_ENTRIES.len() {
+            gallery.next();
+        }
+        assert!(gallery.can_previous());
+        assert!(!gallery.can_next());
     }
 }
