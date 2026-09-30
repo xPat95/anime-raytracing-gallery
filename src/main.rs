@@ -10,6 +10,7 @@ mod intersect;
 mod light;
 mod material;
 mod materials;
+mod menu_background;
 mod ray_intersect;
 mod render;
 mod scene;
@@ -92,6 +93,8 @@ enum RunMode {
 struct AppOptions {
     mode: RunMode,
     initial_scene_id: Option<String>,
+    generate_menu_backgrounds: Option<bool>,
+    teaser_camera_scene_id: Option<String>,
 }
 
 struct ActiveScene {
@@ -255,12 +258,23 @@ fn main() -> Result<(), String> {
         .title("Anime Ray Tracing Gallery")
         .resizable()
         .build();
+    if let Some(samples_only) = options.generate_menu_backgrounds {
+        return generate_menu_backgrounds(samples_only);
+    }
     raylib.maximize_window();
     raylib.set_target_fps(60);
 
     let ui_assets = UiAssets::load(&mut raylib, &thread)?;
     let mut gallery_state = GalleryState::new();
-    let mut app_state = AppState::Cover;
+    let mut menu_background = menu_background::MenuBackground::load(&mut raylib, &thread);
+    let splash = menu_background::choose_splash();
+    let menu_started = Instant::now();
+    println!(
+        "Menu background: {} frames loaded, approximately {:.1} MiB of RGBA texture data",
+        menu_background.loaded_frames(),
+        menu_background.approximate_gpu_bytes() as f32 / (1024.0 * 1024.0)
+    );
+    let mut app_state = AppState::MainMenu;
     let mut active_scene = None;
     if let Some(scene_id) = options.initial_scene_id.as_deref() {
         active_scene = Some(ActiveScene::load(
@@ -293,7 +307,8 @@ fn main() -> Result<(), String> {
         .as_ref()
         .map(|audio| AudioManager::load(audio, initial_audio_scene));
 
-    let mut cover_bounds = Rectangle::default();
+    let mut main_menu_button = Rectangle::default();
+    let mut cover_layout = ui::CoverLayout::default();
     let mut gallery_layout = GalleryLayout::default();
     let mut transition: Option<UiTransition> = None;
     let mut transition_switched = false;
@@ -301,6 +316,7 @@ fn main() -> Result<(), String> {
 
     while !raylib.window_should_close() {
         let frame_time = raylib.get_frame_time();
+        menu_background.update(frame_time);
         if let Some(audio) = audio_manager.as_mut() {
             audio.update(frame_time);
         }
@@ -357,10 +373,17 @@ fn main() -> Result<(), String> {
 
         if transition.is_none() {
             match app_state {
+                AppState::MainMenu => {
+                    if left_pressed && ui::contains(main_menu_button, mouse) {
+                        app_state = AppState::Cover;
+                    }
+                }
                 AppState::Cover => {
-                    if left_pressed && ui::contains(cover_bounds, mouse) {
+                    if left_pressed && ui::contains(cover_layout.book, mouse) {
                         app_state = AppState::Gallery;
                         transition = Some(UiTransition::new(UiTransitionKind::OpeningBook));
+                    } else if left_pressed && ui::contains(cover_layout.back_button, mouse) {
+                        app_state = AppState::MainMenu;
                     }
                 }
                 AppState::Gallery => {
@@ -407,6 +430,14 @@ fn main() -> Result<(), String> {
                     }
                 }
                 AppState::Scene => {
+                    if raylib.is_key_pressed(KeyboardKey::KEY_P) {
+                        if let (Some(scene_id), Some(scene)) = (
+                            options.teaser_camera_scene_id.as_deref(),
+                            active_scene.as_ref(),
+                        ) {
+                            print_teaser_camera_snapshot(scene_id, &scene.camera);
+                        }
+                    }
                     let button =
                         ui::book_button(raylib.get_screen_width(), raylib.get_screen_height());
                     let audio_button = ui::scene_audio_button(button);
@@ -452,8 +483,21 @@ fn main() -> Result<(), String> {
             });
         let mut drawing = raylib.begin_drawing(&thread);
         match app_state {
-            AppState::Cover => cover_bounds = ui::draw_cover(&mut drawing),
+            AppState::MainMenu => {
+                menu_background.draw(&mut drawing, 118);
+                main_menu_button = ui::draw_main_menu(
+                    &mut drawing,
+                    splash,
+                    menu_started.elapsed().as_secs_f32() * 2.2,
+                    mouse,
+                );
+            }
+            AppState::Cover => {
+                menu_background.draw(&mut drawing, 138);
+                cover_layout = ui::draw_book_cover(&mut drawing, mouse);
+            }
             AppState::Gallery => {
+                menu_background.draw(&mut drawing, 158);
                 gallery_layout = ui::draw_gallery(
                     &mut drawing,
                     &ui_assets,
@@ -710,6 +754,38 @@ fn print_camera_state(camera: &Camera) {
     );
 }
 
+fn print_teaser_camera_snapshot(scene_id: &str, camera: &Camera) {
+    let position = camera.position();
+    let target = camera.target();
+    println!(
+        "\n=== TEASER CAMERA SNAPSHOT ===\nscene: {scene_id}\nposition: Vec3::new({:?}, {:?}, {:?})\ntarget: Vec3::new({:?}, {:?}, {:?})\nradius: {:?}\nyaw: {:?}\npitch: {:?}\nfov: {:?}\n\nteaser(\n    \"{scene_id}\",\n    \"{}\",\n    Vec3 {{ x: {:?}, y: {:?}, z: {:?} }},\n    {:?},\n    {:?},\n    {:?},\n    0.06,\n),\n==============================\n",
+        position.x,
+        position.y,
+        position.z,
+        target.x,
+        target.y,
+        target.z,
+        camera.radius(),
+        camera.yaw(),
+        camera.pitch(),
+        camera.fov_degrees(),
+        teaser_folder(scene_id),
+        target.x,
+        target.y,
+        target.z,
+        camera.radius(),
+        camera.yaw(),
+        camera.pitch(),
+    );
+}
+
+fn teaser_folder(scene_id: &str) -> &str {
+    match scene_id {
+        "black_clover_skull" => "black_clover",
+        other => other,
+    }
+}
+
 fn key_axis(raylib: &RaylibHandle, negative: KeyboardKey, positive: KeyboardKey) -> f32 {
     raylib.is_key_down(positive) as u8 as f32 - raylib.is_key_down(negative) as u8 as f32
 }
@@ -766,6 +842,8 @@ fn fit_render_to_window(
 fn parse_options() -> Result<AppOptions, String> {
     let mut mode = RunMode::Optimized;
     let mut initial_scene_id = None;
+    let mut generate_menu_backgrounds = None;
+    let mut teaser_camera_scene_id = None;
     let mut arguments = env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -776,6 +854,15 @@ fn parse_options() -> Result<AppOptions, String> {
             "--compare-culling" => mode = RunMode::Compare,
             "--benchmark-accelerators" => mode = RunMode::BenchmarkAccelerators,
             "--benchmark-quality" => mode = RunMode::BenchmarkQuality,
+            "--generate-menu-backgrounds" => generate_menu_backgrounds = Some(false),
+            "--generate-menu-background-samples" => generate_menu_backgrounds = Some(true),
+            "--teaser-camera" => {
+                let scene_id = arguments
+                    .next()
+                    .ok_or("--teaser-camera requires a scene id")?;
+                initial_scene_id = Some(scene_id.clone());
+                teaser_camera_scene_id = Some(scene_id);
+            }
             _ => return Err(format!("unknown argument '{argument}'")),
         }
     }
@@ -785,7 +872,78 @@ fn parse_options() -> Result<AppOptions, String> {
     Ok(AppOptions {
         mode,
         initial_scene_id,
+        generate_menu_backgrounds,
+        teaser_camera_scene_id,
     })
+}
+
+fn generate_menu_backgrounds(samples_only: bool) -> Result<(), String> {
+    let resolution = RenderResolution {
+        width: menu_background::WIDTH,
+        height: menu_background::HEIGHT,
+    };
+    let frame_count = if samples_only {
+        3
+    } else {
+        menu_background::FRAMES_PER_SCENE
+    };
+    let started = Instant::now();
+    for teaser in menu_background::TEASERS {
+        let config = find_scene(teaser.scene_id)?;
+        if samples_only {
+            menu_background::prepare_sample_output(teaser)?;
+        } else {
+            menu_background::prepare_output(teaser)?;
+        }
+        let (materials, textures) = MaterialCatalog::load(&config.textures, &config.materials)?;
+        let scene = load_configured_scene(&config, &materials, true)?;
+        let bvh = build_bvh(&scene.primitives);
+        let ground = GroundPlane::from_config(config.ground)?;
+        println!(
+            "Generating {} teaser frames for {}...",
+            frame_count, config.id
+        );
+        for output_frame in 0..frame_count {
+            let sequence_frame = if samples_only {
+                [
+                    0,
+                    menu_background::FRAMES_PER_SCENE / 2,
+                    menu_background::FRAMES_PER_SCENE - 1,
+                ][output_frame]
+            } else {
+                output_frame
+            };
+            let camera_config = if samples_only {
+                teaser.camera_at_phase([0.0, 0.5, 1.0][output_frame])
+            } else {
+                teaser.camera_for_frame(sequence_frame, menu_background::FRAMES_PER_SCENE)
+            };
+            let camera = Camera::new(camera_config);
+            let render_time = sequence_frame as f32 / menu_background::FPS as f32;
+            let framebuffer = render_scene_at(
+                &camera,
+                &scene,
+                &bvh,
+                &textures,
+                &config.lighting,
+                config.sky,
+                &ground,
+                render_time,
+                RenderStrategy::BvhMultiThread,
+                "menu teaser",
+                resolution,
+            )
+            .0;
+            let path = if samples_only {
+                teaser.sample_path(["start", "middle", "end"][output_frame])
+            } else {
+                teaser.frame_path(output_frame)
+            };
+            framebuffer.to_image().export_image(&path);
+        }
+    }
+    println!("Menu backgrounds generated in {:.2?}", started.elapsed());
+    Ok(())
 }
 
 fn build_bvh(primitives: &[crate::cube::Cube]) -> Bvh {

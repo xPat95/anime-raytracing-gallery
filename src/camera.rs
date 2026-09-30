@@ -165,6 +165,22 @@ impl Camera {
         self.position
     }
 
+    pub fn target(&self) -> Vec3 {
+        self.target
+    }
+
+    pub fn yaw(&self) -> f32 {
+        self.yaw
+    }
+
+    pub fn pitch(&self) -> f32 {
+        self.pitch
+    }
+
+    pub fn fov_degrees(&self) -> f32 {
+        self.fov_radians.to_degrees()
+    }
+
     pub fn yaw_degrees(&self) -> f32 {
         self.yaw.to_degrees()
     }

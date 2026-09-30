@@ -30,6 +30,7 @@ pub const GALLERY_ENTRIES: [GalleryEntry; 5] = [
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppState {
+    MainMenu,
     Cover,
     Gallery,
     Scene,
@@ -189,37 +190,163 @@ pub struct AudioUiState {
     pub duration: f32,
 }
 
-pub fn draw_cover(drawing: &mut RaylibDrawHandle<'_>) -> Rectangle {
+pub fn draw_main_menu(
+    drawing: &mut RaylibDrawHandle<'_>,
+    splash: &str,
+    elapsed: f32,
+    mouse: Vector2,
+) -> Rectangle {
+    let screen_width = drawing.get_screen_width() as f32;
+    let screen_height = drawing.get_screen_height() as f32;
+    let title_size = if screen_width < 900.0 { 62 } else { 92 };
+    let title_y = screen_height * 0.18;
+    draw_centered_text(
+        drawing,
+        "MINECRAFT",
+        screen_width * 0.5 + 5.0,
+        title_y + 7.0,
+        title_size,
+        Color::new(35, 35, 35, 255),
+    );
+    draw_centered_text(
+        drawing,
+        "MINECRAFT",
+        screen_width * 0.5,
+        title_y,
+        title_size,
+        Color::new(224, 224, 218, 255),
+    );
+    draw_centered_text(
+        drawing,
+        "ANIME GALLERY",
+        screen_width * 0.5 + 2.0,
+        title_y + title_size as f32 - 2.0,
+        30,
+        Color::BLACK,
+    );
+    draw_centered_text(
+        drawing,
+        "ANIME GALLERY",
+        screen_width * 0.5,
+        title_y + title_size as f32 - 5.0,
+        30,
+        Color::new(238, 238, 238, 255),
+    );
+
+    let pulse = 1.0 + elapsed.sin() * 0.035;
+    let splash_size = (24.0 * pulse) as i32;
+    let splash_x = screen_width * 0.62;
+    let splash_y = title_y + title_size as f32 * 0.72;
+    drawing.draw_text_pro(
+        drawing.get_font_default(),
+        splash,
+        Vector2::new(splash_x, splash_y),
+        Vector2::new(
+            drawing.measure_text(splash, splash_size) as f32 * 0.5,
+            splash_size as f32 * 0.5,
+        ),
+        -11.0,
+        splash_size as f32,
+        0.0,
+        Color::new(255, 232, 38, 255),
+    );
+
+    let button = Rectangle::new(
+        (screen_width - 360.0) * 0.5,
+        screen_height * 0.53,
+        360.0,
+        58.0,
+    );
+    let hovered = contains(button, mouse);
+    drawing.draw_rectangle_rec(
+        Rectangle::new(button.x + 4.0, button.y + 5.0, button.width, button.height),
+        Color::new(20, 20, 20, 210),
+    );
+    drawing.draw_rectangle_rec(
+        button,
+        if hovered {
+            Color::new(126, 126, 126, 245)
+        } else {
+            Color::new(93, 93, 93, 245)
+        },
+    );
+    drawing.draw_line_ex(
+        Vector2::new(button.x, button.y),
+        Vector2::new(button.x + button.width, button.y),
+        3.0,
+        Color::new(200, 200, 200, 255),
+    );
+    drawing.draw_line_ex(
+        Vector2::new(button.x, button.y),
+        Vector2::new(button.x, button.y + button.height),
+        3.0,
+        Color::new(200, 200, 200, 255),
+    );
+    drawing.draw_line_ex(
+        Vector2::new(button.x, button.y + button.height),
+        Vector2::new(button.x + button.width, button.y + button.height),
+        4.0,
+        Color::new(45, 45, 45, 255),
+    );
+    draw_centered_text(
+        drawing,
+        "Open Gallery",
+        screen_width * 0.5 + 2.0,
+        button.y + 18.0,
+        24,
+        Color::new(35, 35, 35, 255),
+    );
+    draw_centered_text(
+        drawing,
+        "Open Gallery",
+        screen_width * 0.5,
+        button.y + 16.0,
+        24,
+        Color::WHITE,
+    );
+    button
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct CoverLayout {
+    pub book: Rectangle,
+    pub back_button: Rectangle,
+}
+
+pub fn draw_book_cover(drawing: &mut RaylibDrawHandle<'_>, mouse: Vector2) -> CoverLayout {
     let screen_width = drawing.get_screen_width() as f32;
     let screen_height = drawing.get_screen_height() as f32;
     let height = (screen_height * 0.72).clamp(360.0, 680.0);
     let width = (height * 0.68).min(screen_width * 0.72);
-    let cover = Rectangle::new(
+    let book = Rectangle::new(
         (screen_width - width) * 0.5,
         (screen_height - height) * 0.5,
         width,
         height,
     );
 
-    drawing.clear_background(Color::new(39, 29, 22, 255));
     drawing.draw_rectangle_rec(
-        Rectangle::new(cover.x + 12.0, cover.y + 14.0, cover.width, cover.height),
+        Rectangle::new(book.x + 12.0, book.y + 14.0, book.width, book.height),
         Color::new(20, 14, 10, 180),
     );
-    drawing.draw_rectangle_rec(cover, Color::new(91, 49, 32, 255));
-    draw_pixel_border(drawing, cover, Color::new(48, 26, 19, 255), 10.0);
-    let inset = inset(cover, 28.0);
-    draw_pixel_border(drawing, inset, Color::new(151, 94, 53, 255), 5.0);
+    drawing.draw_rectangle_rec(book, Color::new(91, 49, 32, 255));
+    draw_pixel_border(drawing, book, Color::new(48, 26, 19, 255), 10.0);
+    draw_pixel_border(
+        drawing,
+        inset(book, 28.0),
+        Color::new(151, 94, 53, 255),
+        5.0,
+    );
     drawing.draw_rectangle(
-        (cover.x + 20.0) as i32,
-        cover.y as i32,
+        (book.x + 20.0) as i32,
+        book.y as i32,
         18,
-        cover.height as i32,
+        book.height as i32,
         Color::new(61, 31, 24, 255),
     );
 
-    let title_size = if cover.height < 500.0 { 28 } else { 38 };
-    let title_y = cover.y + cover.height * 0.27;
+    let title_size = if book.height < 500.0 { 28 } else { 38 };
+    let title_y = book.y + book.height * 0.27;
     for (index, line) in ["MINECRAFT", "RAYTRACING", "ART GALLERY"]
         .iter()
         .enumerate()
@@ -227,7 +354,7 @@ pub fn draw_cover(drawing: &mut RaylibDrawHandle<'_>) -> Rectangle {
         draw_centered_text(
             drawing,
             line,
-            cover.x + cover.width * 0.5,
+            book.x + book.width * 0.5,
             title_y + index as f32 * (title_size as f32 + 16.0),
             title_size,
             Color::new(239, 215, 157, 255),
@@ -236,12 +363,33 @@ pub fn draw_cover(drawing: &mut RaylibDrawHandle<'_>) -> Rectangle {
     draw_centered_text(
         drawing,
         "Click to open",
-        cover.x + cover.width * 0.5,
-        cover.y + cover.height - 72.0,
+        book.x + book.width * 0.5,
+        book.y + book.height - 72.0,
         20,
         Color::new(219, 187, 126, 255),
     );
-    cover
+
+    let back_button = Rectangle::new(24.0, screen_height - 58.0, 112.0, 34.0);
+    let hovered = contains(back_button, mouse);
+    drawing.draw_rectangle_rec(
+        back_button,
+        if hovered {
+            Color::new(110, 110, 110, 220)
+        } else {
+            Color::new(68, 68, 68, 205)
+        },
+    );
+    drawing.draw_rectangle_lines_ex(back_button, 2.0, Color::new(190, 190, 190, 255));
+    draw_centered_text(
+        drawing,
+        "Back",
+        back_button.x + back_button.width * 0.5,
+        back_button.y + 8.0,
+        18,
+        Color::WHITE,
+    );
+
+    CoverLayout { book, back_button }
 }
 
 pub fn draw_gallery(
@@ -254,8 +402,6 @@ pub fn draw_gallery(
 ) -> GalleryLayout {
     let screen_width = drawing.get_screen_width() as f32;
     let screen_height = drawing.get_screen_height() as f32;
-    drawing.clear_background(Color::new(49, 35, 25, 255));
-
     let width = (screen_width * 0.88).min(1260.0);
     let height = (screen_height * 0.78).min(width * 0.58).max(390.0);
     let width = width.min(height * 1.75);
