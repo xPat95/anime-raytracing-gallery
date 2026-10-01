@@ -668,6 +668,15 @@ pub fn scene_audio_button(book: Rectangle) -> Rectangle {
     )
 }
 
+pub fn scene_auto_rotation_button(audio: Rectangle) -> Rectangle {
+    Rectangle::new(
+        audio.x,
+        audio.y + audio.height + 12.0,
+        audio.width,
+        audio.height,
+    )
+}
+
 pub fn draw_scene_audio_button(
     drawing: &mut RaylibDrawHandle<'_>,
     bounds: Rectangle,
@@ -700,6 +709,46 @@ pub fn draw_scene_audio_button(
             Color::new(120, 224, 137, 255),
         );
     }
+}
+
+pub fn draw_scene_auto_rotation_button(
+    drawing: &mut RaylibDrawHandle<'_>,
+    bounds: Rectangle,
+    hovered: bool,
+    active: bool,
+) {
+    let fill = if hovered {
+        Color::new(108, 69, 45, 245)
+    } else {
+        Color::new(76, 42, 28, 235)
+    };
+    drawing.draw_rectangle_rec(bounds, fill);
+    draw_pixel_border(drawing, bounds, Color::new(231, 213, 166, 255), 2.0);
+
+    let ink = Color::new(238, 220, 174, 255);
+    let center = Vector2::new(bounds.x + bounds.width * 0.5, bounds.y + 15.0);
+    drawing.draw_circle_lines(center.x as i32, center.y as i32, 8.0, ink);
+    drawing.draw_triangle(
+        Vector2::new(center.x + 10.0, center.y - 5.0),
+        Vector2::new(center.x + 4.0, center.y - 10.0),
+        Vector2::new(center.x + 3.0, center.y - 3.0),
+        ink,
+    );
+
+    let label = if active { "ON" } else { "OFF" };
+    let font_size = 10;
+    let label_width = drawing.measure_text(label, font_size) as f32;
+    drawing.draw_text(
+        label,
+        (bounds.x + (bounds.width - label_width) * 0.5) as i32,
+        (bounds.y + bounds.height - 14.0) as i32,
+        font_size,
+        if active {
+            Color::new(120, 224, 137, 255)
+        } else {
+            Color::new(196, 184, 157, 255)
+        },
+    );
 }
 
 fn draw_audio_player(

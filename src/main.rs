@@ -26,7 +26,7 @@ use std::{
 
 use audio::AudioManager;
 use bvh::Bvh;
-use camera::Camera;
+use camera::{Camera, KEYBOARD_ORBIT_SPEED};
 use framebuffer::Framebuffer;
 use gallery::SceneConfig;
 use ground::GroundPlane;
@@ -45,6 +45,7 @@ const INITIAL_WINDOW_WIDTH: i32 = 1280;
 const INITIAL_WINDOW_HEIGHT: i32 = 720;
 const RENDER_ASPECT_WIDTH: u32 = 16;
 const RENDER_ASPECT_HEIGHT: u32 = 9;
+const AUTO_ROTATION_SPEED: f32 = 6.0_f32.to_radians();
 
 const RENDER_QUALITY: RenderQuality = RenderQuality {
     interactive_max_width: 640,
@@ -112,6 +113,7 @@ struct ActiveScene {
     last_interaction: Instant,
     animation_started: Instant,
     rendered_animation_frames: Vec<usize>,
+    auto_rotation: bool,
 }
 
 impl ActiveScene {
@@ -157,6 +159,7 @@ impl ActiveScene {
             last_interaction: Instant::now(),
             animation_started: Instant::now(),
             rendered_animation_frames,
+            auto_rotation: false,
         })
     }
 
@@ -182,6 +185,13 @@ impl ActiveScene {
         let pan_x = key_axis(raylib, KeyboardKey::KEY_LEFT, KeyboardKey::KEY_RIGHT);
         let pan_y = key_axis(raylib, KeyboardKey::KEY_DOWN, KeyboardKey::KEY_UP);
         let frame_time = raylib.get_frame_time();
+        if self.auto_rotation {
+            camera_changed |= self.camera.orbit_keyboard(
+                AUTO_ROTATION_SPEED / KEYBOARD_ORBIT_SPEED,
+                0.0,
+                frame_time,
+            );
+        }
         camera_changed |= self.camera.orbit_keyboard(orbit_x, orbit_y, frame_time);
         camera_changed |= self.camera.pan_keyboard(pan_x, pan_y, frame_time);
         camera_changed |= self.camera.zoom(raylib.get_mouse_wheel_move());
@@ -441,8 +451,10 @@ fn main() -> Result<(), String> {
                     let button =
                         ui::book_button(raylib.get_screen_width(), raylib.get_screen_height());
                     let audio_button = ui::scene_audio_button(button);
+                    let auto_rotation_button = ui::scene_auto_rotation_button(audio_button);
                     let consumes_mouse = (ui::contains(button, mouse)
-                        || ui::contains(audio_button, mouse))
+                        || ui::contains(audio_button, mouse)
+                        || ui::contains(auto_rotation_button, mouse))
                         && raylib.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT);
                     if left_pressed && ui::contains(button, mouse) {
                         if let Some(audio) = audio_manager.as_mut() {
@@ -452,6 +464,10 @@ fn main() -> Result<(), String> {
                     } else if left_pressed && ui::contains(audio_button, mouse) {
                         if let Some(audio) = audio_manager.as_mut() {
                             audio.toggle_intro();
+                        }
+                    } else if left_pressed && ui::contains(auto_rotation_button, mouse) {
+                        if let Some(scene) = active_scene.as_mut() {
+                            scene.auto_rotation = !scene.auto_rotation;
                         }
                     } else if let Some(scene) = active_scene.as_mut() {
                         if let Some(audio) = audio_manager.as_mut() {
@@ -535,6 +551,16 @@ fn main() -> Result<(), String> {
                     ui::scene_audio_button(book_button),
                     ui::contains(ui::scene_audio_button(book_button), mouse),
                     audio_status,
+                );
+                let audio_button = ui::scene_audio_button(book_button);
+                let auto_rotation_button = ui::scene_auto_rotation_button(audio_button);
+                ui::draw_scene_auto_rotation_button(
+                    &mut drawing,
+                    auto_rotation_button,
+                    ui::contains(auto_rotation_button, mouse),
+                    active_scene
+                        .as_ref()
+                        .is_some_and(|scene| scene.auto_rotation),
                 );
             }
         }
