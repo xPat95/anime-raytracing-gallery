@@ -1,6 +1,6 @@
 use raylib::audio::{Music, RaylibAudio};
 
-pub const BACKGROUND_VOLUME: f32 = 0.28;
+pub const BACKGROUND_VOLUME: f32 = 0.45;
 pub const INTRO_VOLUME: f32 = 0.50;
 pub const FADE_SECONDS: f32 = 0.4;
 
